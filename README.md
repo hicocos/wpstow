@@ -127,15 +127,11 @@ R2 控制台会把 `/` 前缀显示得像文件夹，但对象存储本质上保
 
 进入 WPStow 设置 → 存储配置 → “媒体 URL 策略”，选择“本地优先”并保存。插件会停止把仍有本地副本的已处理附件改写为云端 URL，覆盖媒体库网格/列表、编辑器插入、REST `source_url` 和 `srcset`；云端对象和处理状态仍保留，之后可一键切回“云端优先”。如果某个已处理附件已经没有本地副本，会自动继续使用云端链接，避免前台 404。
 
-## 备份与升级
+## 数据安全与备份
 
-升级前备份插件目录和 WordPress 数据库。设置保存在 `wpstow_setting` option 中；附件状态保存在 `_wpstow_uploaded`、`_wpstow_cloud_key`、`_wpstow_storage_type` 和 `_wpstow_storage_manifest` 等 post meta 中。
+建议定期备份插件目录和 WordPress 数据库。设置保存在 `wpstow_setting` option 中；附件状态保存在 `_wpstow_uploaded`、`_wpstow_cloud_key`、`_wpstow_storage_type` 和 `_wpstow_storage_manifest` 等 post meta 中。
 
-从旧版本升级时，若尚未保存新选项，`keep_local` 与 `cloud_fallback_local` 会安全地默认为 `yes`，`media_url_mode` 会默认为 `cloud`，保持原来的云端链接行为。如确实只需要云端副本，可在“存储配置”中显式关闭双保留。
-
-旧版单一存储配置会自动成为四类路由的默认值。若旧存储源是 OneImg，图片继续使用 OneImg，视频、音频和其他文件默认保持仅本地，与旧版行为一致。
-
-从 VeMedia 更名升级时，插件会自动复制旧设置、附件状态和 OneImg 对象映射；旧数据会保留，便于必要时回退。
+插件默认保留本地副本并启用云端读取失败回退。确认远端存储稳定后，可以在“存储配置”中按需调整副本与访问策略。
 
 ## 开发与发布
 
