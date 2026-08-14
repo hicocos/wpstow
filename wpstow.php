@@ -1,0 +1,310 @@
+<?php
+
+/**
+ * Plugin Name: WPStow
+ * Plugin URI: https://github.com/hicocos/wpstow
+ * Description: 将 WordPress 媒体上传至云端存储（支持 OneImg API/S3/WebDAV/FTP）
+ * Version: 1.5.0
+ * Author: MoePick
+ * Author URI: https://moepick.com/
+ * Requires PHP: 7.4
+ * Text Domain: wpstow
+ * License: MIT
+ * License URI: https://opensource.org/license/mit/
+ */
+
+if (!defined('ABSPATH')) exit;
+
+define('WPSTOW_VERSION', '1.5.0');
+define('WPSTOW_PLUGIN_DIR', plugin_dir_path(__FILE__));
+define('WPSTOW_PLUGIN_URL', plugin_dir_url(__FILE__));
+
+require_once plugin_dir_path(__FILE__) . '/autoload.php';
+
+use WPStow\MediaHandler;
+use WPStow\MediaProxy;
+use WPStow\Update;
+use WPStow\Utils;
+
+/**
+ * Preserve settings and attachment state when upgrading from the former plugin name.
+ */
+function wpstow_migrate_legacy_data() {
+    if (get_option('wpstow_legacy_migration_version') === '1') {
+        return;
+    }
+
+    $legacy_setting = get_option('vemedia_setting', null);
+    if (get_option('wpstow_setting', null) === null && $legacy_setting !== null) {
+        add_option('wpstow_setting', $legacy_setting, '', false);
+    }
+
+    $legacy_rewrite_version = get_option('vemedia_rewrite_rules_version', null);
+    if (get_option('wpstow_rewrite_rules_version', null) === null && $legacy_rewrite_version !== null) {
+        add_option('wpstow_rewrite_rules_version', $legacy_rewrite_version, '', false);
+    }
+
+    global $wpdb;
+    $meta_keys = [
+        '_vemedia_uploaded' => '_wpstow_uploaded',
+        '_vemedia_cloud_key' => '_wpstow_cloud_key',
+        '_vemedia_storage_type' => '_wpstow_storage_type',
+        '_vemedia_storage_manifest' => '_wpstow_storage_manifest',
+        '_vemedia_pending' => '_wpstow_pending',
+        '_vemedia_pending_storage' => '_wpstow_pending_storage',
+        '_vemedia_upload_error' => '_wpstow_upload_error',
+    ];
+
+    foreach ($meta_keys as $legacy_key => $new_key) {
+        $wpdb->query($wpdb->prepare(
+            "INSERT INTO {$wpdb->postmeta} (post_id, meta_key, meta_value)
+             SELECT legacy.post_id, %s, legacy.meta_value
+             FROM {$wpdb->postmeta} AS legacy
+             LEFT JOIN {$wpdb->postmeta} AS current
+               ON current.post_id = legacy.post_id AND current.meta_key = %s
+             WHERE legacy.meta_key = %s AND current.meta_id IS NULL",
+            $new_key,
+            $new_key,
+            $legacy_key
+        ));
+    }
+
+    update_option('wpstow_legacy_migration_version', '1', false);
+}
+
+wpstow_migrate_legacy_data();
+
+add_action('admin_init', 'wpstow_redirect_legacy_settings_page', 1);
+function wpstow_redirect_legacy_settings_page() {
+    if (
+        current_user_can('manage_options')
+        && isset($_GET['page'])
+        && sanitize_key(wp_unslash($_GET['page'])) === 'vemedia_settings'
+    ) {
+        wp_safe_redirect(admin_url('admin.php?page=wpstow_settings'));
+        exit;
+    }
+}
+
+register_activation_hook(__FILE__, 'wpstow_activate');
+function wpstow_activate() {
+    wpstow_migrate_legacy_data();
+
+    $log_dir = WPSTOW_PLUGIN_DIR . 'logs/';
+    if (!is_dir($log_dir)) {
+        wp_mkdir_p($log_dir);
+        file_put_contents($log_dir . '.htaccess', 'Deny from all');
+    }
+
+    if (!wpstow_check_requirements()) {
+        deactivate_plugins(plugin_basename(__FILE__));
+        wp_die(
+            'WPStow 插件需要以下 PHP 扩展：<ul>' . wpstow_get_requirements_list() . '</ul>请联系服务器管理员启用这些扩展后重新激活插件。',
+            '插件激活失败',
+            ['back_link' => true]
+        );
+    }
+}
+
+register_deactivation_hook(__FILE__, 'wpstow_deactivate');
+function wpstow_deactivate() {
+    MediaProxy::removeHtaccess();
+}
+
+function wpstow_check_requirements() {
+    $requirements = [
+        'curl' => extension_loaded('curl'),
+        'json' => extension_loaded('json'),
+    ];
+
+    return !in_array(false, $requirements, true);
+}
+
+function wpstow_get_requirements_list() {
+    $list = '';
+    $requirements = [
+        'curl' => ['name' => 'cURL', 'required' => true, 'loaded' => extension_loaded('curl')],
+        'json' => ['name' => 'JSON', 'required' => true, 'loaded' => extension_loaded('json')],
+        'fileinfo' => ['name' => 'Fileinfo', 'required' => false, 'loaded' => extension_loaded('fileinfo')],
+    ];
+
+    foreach ($requirements as $key => $req) {
+        $status = $req['loaded'] ? '✓' : '✗';
+        $required = $req['required'] ? '（必需）' : '（可选，推荐）';
+        $class = $req['loaded'] ? 'success' : ($req['required'] ? 'error' : 'warning');
+        $list .= sprintf(
+            '<li class="%s">%s %s %s</li>',
+            esc_attr($class),
+            esc_html($status),
+            esc_html($req['name']),
+            esc_html($required)
+        );
+    }
+
+    return $list;
+}
+
+add_action('admin_notices', 'wpstow_admin_notices');
+function wpstow_admin_notices() {
+    if (!current_user_can('manage_options')) {
+        return;
+    }
+
+    $screen = get_current_screen();
+    if ($screen && in_array($screen->id, ['toplevel_page_wpstow_settings', 'settings_page_wpstow_settings', 'plugins'], true)) {
+        $requirements = [
+            'curl' => ['name' => 'cURL', 'loaded' => extension_loaded('curl'), 'required' => true],
+            'json' => ['name' => 'JSON', 'loaded' => extension_loaded('json'), 'required' => true],
+            'fileinfo' => ['name' => 'Fileinfo', 'loaded' => extension_loaded('fileinfo'), 'required' => false],
+        ];
+
+        $missing_required = [];
+        $missing_optional = [];
+
+        foreach ($requirements as $key => $req) {
+            if (!$req['loaded']) {
+                if ($req['required']) {
+                    $missing_required[] = $req['name'];
+                } else {
+                    $missing_optional[] = $req['name'];
+                }
+            }
+        }
+
+        if (!empty($missing_required)) {
+            echo '<div class="notice notice-error"><p>';
+            echo '<strong>WPStow 警告：</strong>缺少必需的 PHP 扩展：<strong>' . esc_html(implode(', ', $missing_required)) . '</strong>。';
+            echo '插件可能无法正常工作。请联系服务器管理员启用这些扩展。';
+            echo '</p></div>';
+        }
+
+        if (!empty($missing_optional)) {
+            echo '<div class="notice notice-warning"><p>';
+            echo '<strong>WPStow 提示：</strong>可选扩展 <strong>' . esc_html(implode(', ', $missing_optional)) . '</strong> 未加载。';
+            echo '插件将使用备用方案识别文件类型，但建议启用该扩展以获得更好的性能和准确性。';
+            echo '</p></div>';
+        }
+    }
+}
+
+if (is_admin()) {
+    add_filter('plugin_action_links_' . plugin_basename(__FILE__), array(MediaHandler::class, 'plugin_settings_link'));
+}
+
+add_action('admin_enqueue_scripts', function ($hook) {
+    if (!in_array($hook, ['toplevel_page_wpstow_settings', 'upload.php'], true)) {
+        return;
+    }
+
+    if ($hook === 'toplevel_page_wpstow_settings') {
+        $admin_css = WPSTOW_PLUGIN_DIR . 'static/admin.css';
+        $admin_css_version = file_exists($admin_css) ? WPSTOW_VERSION . '-' . filemtime($admin_css) : WPSTOW_VERSION;
+        // CSF may be bundled by the active theme without registering a public
+        // "csf" style handle. Depending on that handle prevents this stylesheet
+        // from being printed on otherwise valid installations.
+        wp_enqueue_style('wpstow-admin', WPSTOW_PLUGIN_URL . 'static/admin.css', [], $admin_css_version);
+
+        $admin_js = WPSTOW_PLUGIN_DIR . 'static/admin.js';
+        $admin_js_version = file_exists($admin_js) ? WPSTOW_VERSION . '-' . filemtime($admin_js) : WPSTOW_VERSION;
+        wp_enqueue_script('wpstow-admin', WPSTOW_PLUGIN_URL . 'static/admin.js', ['jquery'], $admin_js_version, true);
+        wp_localize_script('wpstow-admin', 'wpstowAdmin', [
+            'ajaxUrl' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('wpstow_admin'),
+        ]);
+        wp_enqueue_media();
+        return;
+    }
+
+    if ($hook === 'upload.php') {
+        wp_enqueue_script('wpstow-media-library', WPSTOW_PLUGIN_URL . 'static/media-library.js', ['jquery'], WPSTOW_VERSION, true);
+        wp_localize_script('wpstow-media-library', 'wpstowMediaLibrary', [
+            'ajaxUrl' => admin_url('admin-ajax.php'),
+            'processing' => __('正在处理…', 'wpstow'),
+            'retry' => __('重试处理', 'wpstow'),
+            'failed' => __('处理失败，请重试', 'wpstow'),
+        ]);
+    }
+}, 20);
+
+require 'src/zibll-csf.php';
+require 'src/hooks.php';
+
+if (is_admin()) {
+    new Update(__FILE__);
+}
+
+add_action('init', function() {
+    if (MediaHandler::config('switch') == 'enable') {
+        add_filter('wp_calculate_image_srcset', [MediaHandler::class, 'filterImageSrcset'], 10, 5);
+        add_filter('wp_get_attachment_link', [MediaHandler::class, 'filterAttachmentLink'], 10, 6);
+    }
+}, 100);
+
+add_action('wp_ajax_wpstow_debug_upload', 'wpstow_debug_upload');
+function wpstow_debug_upload() {
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(['message' => '权限不足']);
+    }
+    check_ajax_referer('wpstow_admin', 'nonce');
+
+    $debugStorageType = MediaHandler::config('provider_config_type') ?: MediaHandler::config('storage_type');
+    $isOneImg = $debugStorageType === 'oneimg';
+    $testName = $isOneImg ? 'wpstow-debug-upload.png' : 'wpstow-debug-upload.txt';
+    $testContent = $isOneImg
+        ? base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', true)
+        : 'test content ' . gmdate('Y-m-d H:i:s');
+    $test_file = function_exists('wp_tempnam') ? wp_tempnam($testName) : tempnam(sys_get_temp_dir(), 'wpstow_');
+    if (!$test_file || $testContent === false || file_put_contents($test_file, $testContent) === false) {
+        wp_send_json_error(['message' => '无法创建本地临时测试文件']);
+    }
+
+    $storageClass = MediaHandler::getStorageClass($debugStorageType);
+    if (!$storageClass) {
+        @unlink($test_file);
+        wp_send_json_error(['message' => '未配置存储类型']);
+    }
+
+    $extension = $isOneImg ? 'png' : 'txt';
+    $cloudKey = 'wpstow-test/test_' . gmdate('YmdHis') . '_' . wp_generate_password(6, false, false) . '.' . $extension;
+    $response = ['success' => false, 'data' => ['message' => '上传自检失败']];
+
+    try {
+        $result = $storageClass::upload($test_file, $cloudKey);
+        if (!empty($result['status'])) {
+            $deleted = (bool) $storageClass::delete($cloudKey);
+            if ($deleted) {
+                $response = ['success' => true, 'data' => ['message' => '上传和临时对象清理均正常', 'key' => $cloudKey]];
+            } else {
+                $response = ['success' => false, 'data' => ['message' => '上传成功，但临时对象删除失败，请检查云端权限', 'key' => $cloudKey]];
+            }
+        } else {
+            $response = ['success' => false, 'data' => ['message' => $result['message'] ?? '上传自检失败']];
+        }
+    } catch (\Throwable $e) {
+        try {
+            $storageClass::delete($cloudKey);
+        } catch (\Throwable $cleanupError) {
+            // Preserve the original self-check error; the random key is returned for manual cleanup if needed.
+        }
+        $response = ['success' => false, 'data' => ['message' => '上传自检异常：' . $e->getMessage(), 'key' => $cloudKey]];
+    } finally {
+        @unlink($test_file);
+    }
+
+    if ($response['success']) {
+        wp_send_json_success($response['data']);
+    }
+    wp_send_json_error($response['data']);
+}
+
+add_action('wp_ajax_wpstow_clear_log', 'wpstow_clear_log');
+function wpstow_clear_log() {
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(['message' => '权限不足']);
+    }
+    check_ajax_referer('wpstow_admin', 'nonce');
+
+    $deleted = Utils::clearLogs('app.log');
+
+    wp_send_json_success(['message' => '日志已清除', 'deleted' => $deleted]);
+}

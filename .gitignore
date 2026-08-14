@@ -1,0 +1,5 @@
+*.log
+.DS_Store
+.phpunit.result.cache
+/build/
+/*.zip
