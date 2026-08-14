@@ -19,10 +19,9 @@ WPStow 是面向 WordPress 的云端媒体插件，支持 OneImg API、S3 兼容
   → 任一失败：保留本地文件并显示可重试错误
 ```
 
-## 当前站点的 R2 路径示例
+## R2 路径示例
 
 ```text
-Bucket: sakura
 Object Key: 2026/08/example.jpg
 ```
 
