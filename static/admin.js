@@ -50,6 +50,10 @@
         if (storageType === 'oneimg') {
             data.oneimg_endpoint = value('oneimg_endpoint');
             data.oneimg_token = value('oneimg_token_input');
+        } else if (storageType === 'superbed') {
+            data.superbed_endpoint = value('superbed_endpoint');
+            data.superbed_api_key = value('superbed_api_key_input');
+            data.superbed_folder_id = value('superbed_folder_id');
         } else if (storageType === 's3') {
             data.s3_endpoint = value('s3_endpoint');
             data.s3_access_key = value('s3_access_key_input');
@@ -78,6 +82,9 @@
         var requirements = {
             oneimg: [
                 ['oneimg_endpoint', '图床地址']
+            ],
+            superbed: [
+                ['superbed_endpoint', 'API 地址']
             ],
             s3: [
                 ['s3_endpoint', 'Endpoint'],
@@ -173,6 +180,335 @@
         });
     }
 
+    var libraryState = {
+        mode: '',
+        stopped: false,
+        category: 'all',
+        cursor: 0,
+        maxId: 0,
+        total: 0,
+        scanned: 0,
+        counts: {},
+        items: [],
+        processed: 0,
+        failed: 0,
+        skipped: 0,
+        requestErrors: 0,
+        keepLocal: true,
+        job: null
+    };
+    var queuePollTimer = null;
+
+    function emptyLibraryCounts() {
+        return {
+            managed: 0,
+            ready: 0,
+            failed: 0,
+            pending: 0,
+            local: 0,
+            missing: 0,
+            unavailable: 0
+        };
+    }
+
+    function resetLibraryState(mode) {
+        libraryState.mode = mode;
+        libraryState.stopped = false;
+        libraryState.category = $('#wpstow-library-category').val() || 'all';
+        libraryState.cursor = 0;
+        libraryState.maxId = 0;
+        libraryState.total = 0;
+        libraryState.scanned = 0;
+        libraryState.counts = emptyLibraryCounts();
+        libraryState.items = [];
+        libraryState.processed = 0;
+        libraryState.failed = 0;
+        libraryState.skipped = 0;
+        libraryState.requestErrors = 0;
+        libraryState.keepLocal = true;
+    }
+
+    function setLibraryBusy(busy) {
+        var queueActive = !!(libraryState.job && libraryState.job.active);
+        $('#wpstow-library-scan, #wpstow-library-category').prop('disabled', busy || queueActive);
+        if (busy || queueActive) {
+            $('#wpstow-library-process').prop('disabled', true);
+        }
+        $('#wpstow-library-stop').prop('hidden', !busy || libraryState.mode !== 'scan').prop('disabled', false);
+        $('.wpstow-library-progress').prop('hidden', !busy && !libraryState.scanned && !libraryState.processed && !libraryState.failed);
+    }
+
+    function setLibraryNotice(message, state) {
+        $('#wpstow-library-notice').attr('class', 'wpstow-library-notice' + (state ? ' is-' + state : '')).text(message || '');
+    }
+
+    function updateLibraryProgress(label, current, total) {
+        var safeTotal = Math.max(1, Number(total) || 1);
+        var safeCurrent = Math.min(safeTotal, Math.max(0, Number(current) || 0));
+        $('.wpstow-library-progress').prop('hidden', false);
+        $('#wpstow-library-progress-label').text(label);
+        $('#wpstow-library-progress-count').text((Number(current) || 0) + ' / ' + (Number(total) || 0));
+        $('#wpstow-library-progress-bar').attr('max', safeTotal).val(safeCurrent);
+    }
+
+    function renderLibraryCounts() {
+        Object.keys(emptyLibraryCounts()).forEach(function (key) {
+            $('[data-wpstow-count="' + key + '"]').text(libraryState.counts[key] || 0);
+        });
+    }
+
+    function statusClass(code) {
+        return ['managed', 'ready', 'failed', 'pending', 'local', 'missing', 'unavailable'].indexOf(code) !== -1 ? code : 'unavailable';
+    }
+
+    function renderLibraryItems() {
+        var $body = $('#wpstow-library-items').empty();
+        if (!libraryState.items.length) {
+            $('.wpstow-library-table-wrap').prop('hidden', true);
+            return;
+        }
+        libraryState.items.slice(-20).forEach(function (item) {
+            var $row = $('<tr>');
+            var $title = $('<span>', {text: item.title || ('附件 #' + item.id)});
+            if (item.edit_url) {
+                $title = $('<a>', {href: item.edit_url, text: item.title || ('附件 #' + item.id)});
+            }
+            $('<td>').append($title).append($('<small>', {text: 'ID ' + item.id})).appendTo($row);
+            $('<td>', {text: item.mime_type || item.category || '-'}).appendTo($row);
+            $('<td>').append($('<span>', {
+                'class': 'wpstow-library-status is-' + statusClass(item.status),
+                text: item.status_label || item.status
+            })).appendTo($row);
+            $('<td>', {text: item.storage_label || '-'}).appendTo($row);
+            $('<td>', {text: item.message || '-'}).appendTo($row);
+            $body.append($row);
+        });
+        $('.wpstow-library-table-wrap').prop('hidden', false);
+    }
+
+    function addLibraryItems(items) {
+        (items || []).forEach(function (item) {
+            var existingIndex = libraryState.items.findIndex(function (existing) { return existing.id === item.id; });
+            if (existingIndex === -1) {
+                libraryState.items.push(item);
+            } else {
+                libraryState.items[existingIndex] = item;
+            }
+        });
+        if (libraryState.items.length > 20) {
+            libraryState.items = libraryState.items.slice(-20);
+        }
+        renderLibraryItems();
+    }
+
+    function libraryRequest(action, data) {
+        return $.ajax({
+            type: 'POST',
+            url: ajaxUrl,
+            dataType: 'json',
+            timeout: 180000,
+            data: $.extend({action: action, nonce: nonce}, data || {})
+        });
+    }
+
+    function finishLibraryScan(stopped) {
+        libraryState.mode = '';
+        setLibraryBusy(false);
+        renderLibraryCounts();
+        renderLibraryItems();
+        var actionable = (libraryState.counts.ready || 0) + (libraryState.counts.failed || 0);
+        $('#wpstow-library-process').prop('disabled', actionable === 0 || !!(libraryState.job && libraryState.job.active));
+        if (stopped) {
+            setLibraryNotice('扫描已停止，当前统计仅包含已扫描部分。', 'warning');
+            return;
+        }
+        setLibraryNotice('扫描完成：共检查 ' + libraryState.scanned + ' 个附件，可接管 ' + actionable + ' 个。', actionable ? 'success' : 'neutral');
+    }
+
+    function scanLibraryPage() {
+        if (libraryState.stopped) {
+            finishLibraryScan(true);
+            return;
+        }
+        libraryRequest('wpstow_scan_media_library', {
+            category: libraryState.category,
+            cursor: libraryState.cursor,
+            max_id: libraryState.maxId
+        }).done(function (response) {
+            if (!response || !response.success) {
+                setLibraryBusy(false);
+                $('#wpstow-library-process').prop('disabled', true);
+                setLibraryNotice(messageFrom(response, '扫描失败'), 'error');
+                return;
+            }
+            var data = response.data || {};
+            libraryState.cursor = Number(data.cursor) || libraryState.cursor;
+            libraryState.maxId = Number(data.max_id) || libraryState.maxId;
+            if (data.total !== null && typeof data.total !== 'undefined') {
+                libraryState.total = Number(data.total) || 0;
+            }
+            libraryState.scanned += Number(data.scanned) || 0;
+            libraryState.keepLocal = data.keep_local !== false;
+            Object.keys(libraryState.counts).forEach(function (key) {
+                libraryState.counts[key] += Number((data.counts || {})[key]) || 0;
+            });
+            addLibraryItems(data.items);
+            renderLibraryCounts();
+            updateLibraryProgress('正在扫描媒体库', libraryState.scanned, libraryState.total);
+            if (data.done) {
+                finishLibraryScan(false);
+            } else {
+                window.setTimeout(scanLibraryPage, 40);
+            }
+        }).fail(function (xhr) {
+            setLibraryBusy(false);
+            $('#wpstow-library-process').prop('disabled', true);
+            setLibraryNotice(messageFrom(xhr.responseJSON, '扫描请求失败'), 'error');
+        });
+    }
+
+    function startLibraryScan() {
+        resetLibraryState('scan');
+        renderLibraryCounts();
+        renderLibraryItems();
+        $('#wpstow-library-process').prop('disabled', true);
+        setLibraryBusy(true);
+        setLibraryNotice('正在读取附件状态…', 'loading');
+        updateLibraryProgress('正在扫描媒体库', 0, 0);
+        scanLibraryPage();
+    }
+
+    function queueNoticeState(job) {
+        if (job.status === 'completed') {
+            return job.failed ? 'warning' : 'success';
+        }
+        if (job.status === 'paused' || job.status === 'cancelled') {
+            return 'warning';
+        }
+        return 'loading';
+    }
+
+    function renderQueueJob(job) {
+        libraryState.job = job || null;
+        var active = !!(job && job.active);
+        $('.wpstow-queue-controls').prop('hidden', !active);
+        $('#wpstow-queue-pause').prop('hidden', !job || !job.can_pause).prop('disabled', false);
+        $('#wpstow-queue-resume').prop('hidden', !job || !job.can_resume).prop('disabled', false);
+        $('#wpstow-queue-cancel').prop('hidden', !job || !job.can_cancel).prop('disabled', false);
+        $('#wpstow-library-scan, #wpstow-library-category').prop('disabled', active || libraryState.mode === 'scan');
+        $('#wpstow-library-process').prop('disabled', active || !((libraryState.counts.ready || 0) + (libraryState.counts.failed || 0)));
+
+        if (!job) {
+            return;
+        }
+
+        libraryState.processed = Number(job.processed) || 0;
+        libraryState.failed = Number(job.failed) || 0;
+        libraryState.skipped = Number(job.skipped) || 0;
+        updateLibraryProgress(job.status_label + ' · 服务器持久队列', Number(job.examined) || 0, Number(job.total) || 0);
+        if (job.last_item) {
+            addLibraryItems([job.last_item]);
+        }
+        var details = '成功 ' + libraryState.processed + '，失败 ' + libraryState.failed + '，跳过 ' + libraryState.skipped + '。';
+        if (job.current_attachment_id && job.current_attempt) {
+            details += ' 附件 #' + job.current_attachment_id + ' 已尝试 ' + job.current_attempt + '/' + job.max_attempts + ' 次。';
+        }
+        setLibraryNotice((job.message ? job.message + '；' : '') + details, queueNoticeState(job));
+    }
+
+    function scheduleQueuePoll(delay) {
+        window.clearTimeout(queuePollTimer);
+        if (libraryState.job && libraryState.job.active) {
+            queuePollTimer = window.setTimeout(pollQueueStatus, delay || 3000);
+        }
+    }
+
+    function pollQueueStatus() {
+        libraryRequest('wpstow_queue_status', {
+            job_id: libraryState.job ? libraryState.job.id : 0
+        }).done(function (response) {
+            if (response && response.success) {
+                renderQueueJob((response.data || {}).job || null);
+            }
+        }).always(function () {
+            scheduleQueuePoll(3000);
+        });
+    }
+
+    function startLibraryProcess() {
+        var actionable = (libraryState.counts.ready || 0) + (libraryState.counts.failed || 0);
+        if (!actionable) {
+            setLibraryNotice('当前扫描结果中没有可接管附件。', 'warning');
+            return;
+        }
+        var warning = '将按当前已保存的分类路由接管 ' + actionable + ' 个附件。';
+        if (!libraryState.keepLocal) {
+            warning += '\n\n当前设置为“上传后删除本地副本”，接管成功后本地文件会被删除。';
+        }
+        if (!window.confirm(warning + '\n\n是否继续？')) {
+            return;
+        }
+        $('#wpstow-library-process').prop('disabled', true).attr('aria-busy', 'true');
+        setLibraryNotice('正在创建服务器队列…', 'loading');
+        libraryRequest('wpstow_queue_start', {
+            category: libraryState.category,
+            max_id: libraryState.maxId
+        }).done(function (response) {
+            var job = response && response.data ? response.data.job : null;
+            if (!response || !response.success) {
+                if (job) {
+                    renderQueueJob(job);
+                }
+                setLibraryNotice(messageFrom(response, '无法创建服务器队列'), 'error');
+                return;
+            }
+            renderQueueJob(job);
+            scheduleQueuePoll(1000);
+        }).fail(function (xhr) {
+            var response = xhr.responseJSON || {};
+            var job = response.data && response.data.job ? response.data.job : null;
+            if (job) {
+                renderQueueJob(job);
+                scheduleQueuePoll(1000);
+            } else {
+                setLibraryNotice(messageFrom(response, '创建服务器队列失败'), 'error');
+            }
+        }).always(function () {
+            $('#wpstow-library-process').removeAttr('aria-busy');
+        });
+    }
+
+    function stopLibraryOperation() {
+        libraryState.stopped = true;
+        $('#wpstow-library-stop').prop('disabled', true);
+        setLibraryNotice('正在停止扫描…', 'warning');
+    }
+
+    function controlQueue(command) {
+        if (!libraryState.job || !libraryState.job.id) {
+            return;
+        }
+        if (command === 'cancel' && !window.confirm('确定取消当前服务器接管任务吗？已接管的附件不会回滚。')) {
+            return;
+        }
+        var $buttons = $('.wpstow-queue-controls .button').prop('disabled', true);
+        libraryRequest('wpstow_queue_control', {
+            job_id: libraryState.job.id,
+            command: command
+        }).done(function (response) {
+            if (response && response.success && response.data && response.data.job) {
+                renderQueueJob(response.data.job);
+                scheduleQueuePoll(1000);
+                return;
+            }
+            setLibraryNotice(messageFrom(response, '队列操作失败'), 'error');
+        }).fail(function (xhr) {
+            setLibraryNotice(messageFrom(xhr.responseJSON, '队列操作请求失败'), 'error');
+        }).always(function () {
+            $buttons.prop('disabled', false);
+        });
+    }
+
     function normalizeTabSlug(valueToNormalize) {
         var normalized = String(valueToNormalize || '').replace(/^#tab=/, '');
         try {
@@ -234,7 +570,20 @@
         .on('click', '#wpstow-test-connection', testConnection)
         .on('click', '.wpstow-debug-upload-trigger', debugUpload)
         .on('click', '#wpstow-clear-log', clearLog)
-        .on('change input', '[data-depend-id="provider_config_type"], [data-depend-id^="oneimg_"], [data-depend-id^="s3_"], [data-depend-id^="webdav_"], [data-depend-id^="ftp_"]', clearConnectionResult)
+        .on('click', '#wpstow-library-scan', startLibraryScan)
+        .on('click', '#wpstow-library-process', startLibraryProcess)
+        .on('click', '#wpstow-library-stop', stopLibraryOperation)
+        .on('click', '#wpstow-queue-pause', function () { controlQueue('pause'); })
+        .on('click', '#wpstow-queue-resume', function () { controlQueue('resume'); })
+        .on('click', '#wpstow-queue-cancel', function () { controlQueue('cancel'); })
+        .on('change', '#wpstow-library-category', function () {
+            resetLibraryState('');
+            renderLibraryCounts();
+            renderLibraryItems();
+            $('#wpstow-library-process').prop('disabled', true);
+            setLibraryNotice('文件类型已改变，请重新扫描。', 'neutral');
+        })
+        .on('change input', '[data-depend-id="provider_config_type"], [data-depend-id^="oneimg_"], [data-depend-id^="superbed_"], [data-depend-id^="s3_"], [data-depend-id^="webdav_"], [data-depend-id^="ftp_"]', clearConnectionResult)
         .on('change', '[data-depend-id="image_compress"], [data-depend-id="image_watermark"]', syncImageOptions);
 
     $(function () {
@@ -243,6 +592,7 @@
         window.setTimeout(function () {
             revealInitialSection();
             syncImageOptions();
+            pollQueueStatus();
         }, 0);
     });
 })(jQuery, window);

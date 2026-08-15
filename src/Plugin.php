@@ -15,6 +15,10 @@ abstract class Plugin
     public $oneimg_endpoint;
     public $oneimg_token;
 
+    public $superbed_endpoint;
+    public $superbed_api_key;
+    public $superbed_folder_id;
+
     public $s3_endpoint;
     public $s3_access_key;
     public $s3_secret_key;
@@ -40,6 +44,7 @@ abstract class Plugin
 
     // 功能开关
     public $localize_images;      // 图片本地化开关
+    public $disable_image_subsizes; // 禁止生成缩略图、缩放图等派生文件
     public $image_compress;       // 图片压缩开关
     public $image_compress_quality; // 压缩质量
     public $image_watermark;      // 水印开关
@@ -81,7 +86,7 @@ abstract class Plugin
         $this->storage_type = $setting['storage_type'] ?? 's3';
         $this->provider_config_type = $setting['provider_config_type'] ?? $this->storage_type;
         $legacyStorageType = $this->storage_type;
-        $nonImageDefault = $legacyStorageType === 'oneimg' ? 'local' : $legacyStorageType;
+        $nonImageDefault = in_array($legacyStorageType, ['oneimg', 'superbed'], true) ? 'local' : $legacyStorageType;
         $this->image_storage_type = $setting['image_storage_type'] ?? $legacyStorageType;
         $this->video_storage_type = $setting['video_storage_type'] ?? $nonImageDefault;
         $this->audio_storage_type = $setting['audio_storage_type'] ?? $nonImageDefault;
@@ -89,6 +94,10 @@ abstract class Plugin
 
         $this->oneimg_endpoint = $setting['oneimg_endpoint'] ?? '';
         $this->oneimg_token = $setting['oneimg_token'] ?? '';
+
+        $this->superbed_endpoint = $setting['superbed_endpoint'] ?? 'https://api.superbed.cc';
+        $this->superbed_api_key = $setting['superbed_api_key'] ?? '';
+        $this->superbed_folder_id = $setting['superbed_folder_id'] ?? '';
 
         $this->s3_endpoint = $setting['s3_endpoint'] ?? '';
         $this->s3_access_key = $setting['s3_access_key'] ?? '';
@@ -115,6 +124,7 @@ abstract class Plugin
 
         // 功能开关初始化
         $this->localize_images = $setting['localize_images'] ?? 'no';
+        $this->disable_image_subsizes = $setting['disable_image_subsizes'] ?? 'no';
         $this->image_compress = $setting['image_compress'] ?? 'no';
         $this->image_compress_quality = $setting['image_compress_quality'] ?? 80;
         $this->image_watermark = $setting['image_watermark'] ?? 'no';

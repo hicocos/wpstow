@@ -3,8 +3,8 @@
 /**
  * Plugin Name: WPStow
  * Plugin URI: https://github.com/hicocos/wpstow
- * Description: 将 WordPress 媒体上传至云端存储（支持 OneImg API/S3/WebDAV/FTP）
- * Version: 1.5.0
+ * Description: 将 WordPress 媒体上传至云端存储（支持聚合图床/OneImg/S3/WebDAV/FTP）
+ * Version: 1.9.0
  * Author: MoePick
  * Author URI: https://moepick.com/
  * Requires PHP: 7.4
@@ -15,9 +15,26 @@
 
 if (!defined('ABSPATH')) exit;
 
-define('WPSTOW_VERSION', '1.5.0');
+define('WPSTOW_VERSION', '1.9.0');
 define('WPSTOW_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('WPSTOW_PLUGIN_URL', plugin_dir_url(__FILE__));
+
+/**
+ * Use an existing Codestar Framework when the active theme or another plugin
+ * provides it. Otherwise load the bundled copy after the theme has initialized.
+ */
+function wpstow_load_csf() {
+    if (!is_admin() || class_exists('CSF', false)) {
+        return;
+    }
+
+    $framework_file = WPSTOW_PLUGIN_DIR . 'vendor/codestar-framework/codestar-framework.php';
+    if (is_readable($framework_file)) {
+        add_filter('csf_welcome_page', '__return_false');
+        require_once $framework_file;
+    }
+}
+add_action('after_setup_theme', 'wpstow_load_csf', 100);
 
 require_once plugin_dir_path(__FILE__) . '/autoload.php';
 
@@ -30,7 +47,7 @@ use WPStow\Utils;
  * Preserve settings and attachment state when upgrading from the former plugin name.
  */
 function wpstow_migrate_legacy_data() {
-    if (get_option('wpstow_legacy_migration_version') === '1') {
+    if (get_option('wpstow_legacy_migration_version') === '2') {
         return;
     }
 
@@ -69,7 +86,16 @@ function wpstow_migrate_legacy_data() {
         ));
     }
 
-    update_option('wpstow_legacy_migration_version', '1', false);
+    // Direct SQL migration bypasses WordPress metadata cache invalidation.
+    // Clear affected persistent-cache entries so legacy attachments are not re-uploaded.
+    $migrated_post_ids = $wpdb->get_col(
+        "SELECT DISTINCT post_id FROM {$wpdb->postmeta} WHERE meta_key IN ('_wpstow_uploaded', '_wpstow_cloud_key', '_wpstow_storage_manifest', '_wpstow_storage_type')"
+    );
+    foreach ($migrated_post_ids as $migrated_post_id) {
+        wp_cache_delete((int) $migrated_post_id, 'post_meta');
+    }
+
+    update_option('wpstow_legacy_migration_version', '2', false);
 }
 
 wpstow_migrate_legacy_data();
@@ -89,6 +115,7 @@ function wpstow_redirect_legacy_settings_page() {
 register_activation_hook(__FILE__, 'wpstow_activate');
 function wpstow_activate() {
     wpstow_migrate_legacy_data();
+    \WPStow\PersistentMediaQueue::install();
 
     $log_dir = WPSTOW_PLUGIN_DIR . 'logs/';
     if (!is_dir($log_dir)) {
@@ -109,6 +136,7 @@ function wpstow_activate() {
 register_deactivation_hook(__FILE__, 'wpstow_deactivate');
 function wpstow_deactivate() {
     MediaProxy::removeHtaccess();
+    \WPStow\PersistentMediaQueue::deactivate();
 }
 
 function wpstow_check_requirements() {
@@ -199,9 +227,9 @@ add_action('admin_enqueue_scripts', function ($hook) {
     if ($hook === 'toplevel_page_wpstow_settings') {
         $admin_css = WPSTOW_PLUGIN_DIR . 'static/admin.css';
         $admin_css_version = file_exists($admin_css) ? WPSTOW_VERSION . '-' . filemtime($admin_css) : WPSTOW_VERSION;
-        // CSF may be bundled by the active theme without registering a public
-        // "csf" style handle. Depending on that handle prevents this stylesheet
-        // from being printed on otherwise valid installations.
+        // An existing CSF integration may not register a public "csf" style
+        // handle. Depending on that handle would prevent this stylesheet from
+        // being printed on otherwise valid installations.
         wp_enqueue_style('wpstow-admin', WPSTOW_PLUGIN_URL . 'static/admin.css', [], $admin_css_version);
 
         $admin_js = WPSTOW_PLUGIN_DIR . 'static/admin.js';
@@ -226,7 +254,7 @@ add_action('admin_enqueue_scripts', function ($hook) {
     }
 }, 20);
 
-require 'src/zibll-csf.php';
+require 'src/admin-csf.php';
 require 'src/hooks.php';
 
 if (is_admin()) {
@@ -248,9 +276,9 @@ function wpstow_debug_upload() {
     check_ajax_referer('wpstow_admin', 'nonce');
 
     $debugStorageType = MediaHandler::config('provider_config_type') ?: MediaHandler::config('storage_type');
-    $isOneImg = $debugStorageType === 'oneimg';
-    $testName = $isOneImg ? 'wpstow-debug-upload.png' : 'wpstow-debug-upload.txt';
-    $testContent = $isOneImg
+    $isImageOnlyStorage = in_array($debugStorageType, ['oneimg', 'superbed'], true);
+    $testName = $isImageOnlyStorage ? 'wpstow-debug-upload.png' : 'wpstow-debug-upload.txt';
+    $testContent = $isImageOnlyStorage
         ? base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', true)
         : 'test content ' . gmdate('Y-m-d H:i:s');
     $test_file = function_exists('wp_tempnam') ? wp_tempnam($testName) : tempnam(sys_get_temp_dir(), 'wpstow_');
@@ -264,7 +292,7 @@ function wpstow_debug_upload() {
         wp_send_json_error(['message' => '未配置存储类型']);
     }
 
-    $extension = $isOneImg ? 'png' : 'txt';
+    $extension = $isImageOnlyStorage ? 'png' : 'txt';
     $cloudKey = 'wpstow-test/test_' . gmdate('YmdHis') . '_' . wp_generate_password(6, false, false) . '.' . $extension;
     $response = ['success' => false, 'data' => ['message' => '上传自检失败']];
 

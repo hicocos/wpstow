@@ -7,6 +7,49 @@ use WPStow\Utils;
 
 class ImageProcessor
 {
+    private static $originalOnlyFiles = [];
+
+    /**
+     * Record the upload being processed and disable WordPress' "-scaled" copy.
+     */
+    public static function disableBigImageScaling($threshold, $imagesize, $file, $attachmentId)
+    {
+        self::$originalOnlyFiles[wp_normalize_path((string) $file)] = (int) $attachmentId;
+        return false;
+    }
+
+    /**
+     * Disable every registered intermediate size, including theme/plugin sizes.
+     */
+    public static function disableImageSubsizes($sizes, $imageMeta = [], $attachmentId = 0)
+    {
+        return [];
+    }
+
+    /**
+     * Keep HEIC/HEIF and plugin-defined formats unchanged during metadata creation.
+     */
+    public static function preserveUploadedImageFormat($formats, $filename, $mimeType)
+    {
+        if (self::isOriginalOnlyFile($filename) && is_array($formats)) {
+            unset($formats[(string) $mimeType]);
+        }
+        return $formats;
+    }
+
+    /**
+     * Avoid WordPress creating a separate "-rotated" copy for EXIF orientation.
+     */
+    public static function disableUploadedImageRotation($orientation, $file)
+    {
+        return self::isOriginalOnlyFile($file) ? 1 : $orientation;
+    }
+
+    private static function isOriginalOnlyFile($file)
+    {
+        return isset(self::$originalOnlyFiles[wp_normalize_path((string) $file)]);
+    }
+
     /**
      * 处理图片（压缩和水印）
      */

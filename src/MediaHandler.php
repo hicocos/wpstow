@@ -8,11 +8,13 @@ use WPStow\S3Storage;
 use WPStow\WebDAVStorage;
 use WPStow\FTPStorage;
 use WPStow\OneImgStorage;
+use WPStow\SuperbedStorage;
 
 class MediaHandler extends Plugin
 {
     private const STORAGE_CLASSES = [
         'oneimg' => OneImgStorage::class,
+        'superbed' => SuperbedStorage::class,
         's3' => S3Storage::class,
         'webdav' => WebDAVStorage::class,
         'ftp' => FTPStorage::class,
@@ -91,6 +93,12 @@ class MediaHandler extends Plugin
                 return $instance->oneimg_endpoint;
             case 'oneimg_token':
                 return $instance->oneimg_token;
+            case 'superbed_endpoint':
+                return $instance->superbed_endpoint;
+            case 'superbed_api_key':
+                return $instance->superbed_api_key;
+            case 'superbed_folder_id':
+                return $instance->superbed_folder_id;
             case 's3_endpoint':
                 return $instance->s3_endpoint;
             case 's3_access_key':
@@ -134,6 +142,8 @@ class MediaHandler extends Plugin
             // 功能开关
             case 'localize_images':
                 return $instance->localize_images;
+            case 'disable_image_subsizes':
+                return $instance->disable_image_subsizes;
             case 'image_compress':
                 return $instance->image_compress;
             case 'image_compress_quality':
@@ -188,7 +198,7 @@ class MediaHandler extends Plugin
         $category = in_array($category, self::MEDIA_CATEGORIES, true) ? $category : 'other';
         $storageType = (string) self::config($category . '_storage_type');
         $allowed = $category === 'image'
-            ? ['oneimg', 's3', 'webdav', 'ftp', 'local']
+            ? ['oneimg', 'superbed', 's3', 'webdav', 'ftp', 'local']
             : ['s3', 'webdav', 'ftp', 'local'];
 
         if (in_array($storageType, $allowed, true)) {
@@ -196,7 +206,7 @@ class MediaHandler extends Plugin
         }
 
         $legacyType = (string) self::config('storage_type');
-        if ($category !== 'image' && $legacyType === 'oneimg') {
+        if ($category !== 'image' && in_array($legacyType, ['oneimg', 'superbed'], true)) {
             return 'local';
         }
         return in_array($legacyType, $allowed, true) ? $legacyType : 'local';
@@ -236,6 +246,9 @@ class MediaHandler extends Plugin
         if ($storageType === 'oneimg') {
             return !empty(self::config('oneimg_endpoint'))
                 && !empty(self::config('oneimg_token'));
+        } elseif ($storageType === 'superbed') {
+            return !empty(self::config('superbed_endpoint'))
+                && !empty(self::config('superbed_api_key'));
         } elseif ($storageType === 's3') {
             return !empty(self::config('s3_endpoint'))
                 && !empty(self::config('s3_access_key'))
@@ -351,7 +364,10 @@ class MediaHandler extends Plugin
         $localFile = $post_id ? get_attached_file($post_id) : '';
         $localExists = $localFile && is_file($localFile);
         $uploaded = (bool) get_post_meta($post_id, '_wpstow_uploaded', true);
-        $pending = (bool) get_post_meta($post_id, '_wpstow_pending', true);
+        $pendingAt = (int) get_post_meta($post_id, '_wpstow_pending_at', true);
+        $pending = (bool) get_post_meta($post_id, '_wpstow_pending', true)
+            && $pendingAt > 0
+            && $pendingAt >= time() - 900;
         $error = (string) get_post_meta($post_id, '_wpstow_upload_error', true);
         $category = self::getMediaCategory(get_post_mime_type($post_id));
         $routeStorageType = self::getStorageTypeForCategory($category);
@@ -470,6 +486,8 @@ class MediaHandler extends Plugin
         $storageIdentity = [];
         if ($storageType === 'oneimg') {
             $storageIdentity = ['endpoint' => self::config('oneimg_endpoint')];
+        } elseif ($storageType === 'superbed') {
+            $storageIdentity = ['endpoint' => self::config('superbed_endpoint'), 'folder_id' => self::config('superbed_folder_id')];
         } elseif ($storageType === 's3') {
             $storageIdentity = ['endpoint' => self::config('s3_endpoint'), 'bucket' => self::config('s3_bucket')];
         } elseif ($storageType === 'webdav') {
@@ -515,6 +533,7 @@ class MediaHandler extends Plugin
         }
 
         update_post_meta($post_id, '_wpstow_pending', '1');
+        update_post_meta($post_id, '_wpstow_pending_at', time());
         update_post_meta($post_id, '_wpstow_pending_storage', $storageType);
         Utils::writeLog('已标记为待上传，等待 generate_attachment_metadata 处理');
     }
@@ -537,6 +556,7 @@ class MediaHandler extends Plugin
         }
         if ($storageType === 'local' || !self::isStorageTypeConfigured($storageType)) {
             delete_post_meta($post_id, '_wpstow_pending');
+            delete_post_meta($post_id, '_wpstow_pending_at');
             delete_post_meta($post_id, '_wpstow_pending_storage');
             update_post_meta($post_id, '_wpstow_upload_error', '该文件类型的存储源配置不完整');
             return $meta;
@@ -549,6 +569,7 @@ class MediaHandler extends Plugin
         $storageClass = self::getStorageClass($storageType);
         if (!$storageClass) {
             delete_post_meta($post_id, '_wpstow_pending');
+            delete_post_meta($post_id, '_wpstow_pending_at');
             delete_post_meta($post_id, '_wpstow_pending_storage');
             update_post_meta($post_id, '_wpstow_upload_error', '无法获取存储驱动');
             return $meta;
@@ -680,6 +701,7 @@ class MediaHandler extends Plugin
             update_post_meta($post_id, '_wpstow_storage_type', $storageType);
             update_post_meta($post_id, '_wpstow_uploaded', '1');
             delete_post_meta($post_id, '_wpstow_pending');
+            delete_post_meta($post_id, '_wpstow_pending_at');
             delete_post_meta($post_id, '_wpstow_pending_storage');
             delete_post_meta($post_id, '_wpstow_upload_error');
             if (!self::shouldKeepLocalFiles()) {
@@ -694,6 +716,7 @@ class MediaHandler extends Plugin
             }
             delete_post_meta($post_id, '_wpstow_cloud_key');
             delete_post_meta($post_id, '_wpstow_pending');
+            delete_post_meta($post_id, '_wpstow_pending_at');
             delete_post_meta($post_id, '_wpstow_pending_storage');
             update_post_meta($post_id, '_wpstow_upload_error', '云端上传未完整成功，本地文件已安全保留');
             Utils::writeLog('上传未完整成功，本地文件已保留，附件 ID=' . $post_id);
@@ -926,14 +949,14 @@ class MediaHandler extends Plugin
         if (get_post_type($post_id) !== 'attachment' || !current_user_can('edit_post', $post_id)) {
             wp_send_json_error(['message' => '无权操作该附件'], 403);
         }
-        self::update_to_cloud($post_id);
-        if (get_post_meta($post_id, '_wpstow_uploaded', true)) {
+        $result = MediaLibraryManager::processAttachment($post_id);
+        if (!empty($result['status']) && get_post_meta($post_id, '_wpstow_uploaded', true)) {
             wp_send_json_success([
                 'message' => self::shouldKeepLocalFiles() ? '处理完成：云端与本地副本均已保留' : '处理完成：已上传云端',
                 'status' => self::getProcessingStatus($post_id),
             ]);
         }
-        wp_send_json_error(['message' => get_post_meta($post_id, '_wpstow_upload_error', true) ?: '上传失败，本地文件已保留']);
+        wp_send_json_error(['message' => $result['message'] ?? (get_post_meta($post_id, '_wpstow_upload_error', true) ?: '上传失败，本地文件已保留')]);
     }
 
     public static function test_storage_connection()
@@ -949,7 +972,7 @@ class MediaHandler extends Plugin
         if (!is_array($candidate)) {
             $candidate = [];
         }
-        $candidate['storage_type'] = in_array($storage_type, ['oneimg', 's3', 'webdav', 'ftp'], true) ? $storage_type : 's3';
+        $candidate['storage_type'] = in_array($storage_type, ['oneimg', 'superbed', 's3', 'webdav', 'ftp'], true) ? $storage_type : 's3';
         $candidate['switch'] = 'enable';
 
         if ($candidate['storage_type'] === 'oneimg') {
@@ -959,6 +982,15 @@ class MediaHandler extends Plugin
                 : ($candidate['oneimg_token'] ?? '');
             $result = self::withRuntimeConfig($candidate, function () {
                 return OneImgStorage::testConnection();
+            });
+        } elseif ($candidate['storage_type'] === 'superbed') {
+            $candidate['superbed_endpoint'] = esc_url_raw(wp_unslash($_POST['superbed_endpoint'] ?? ''));
+            $candidate['superbed_api_key'] = trim((string) wp_unslash($_POST['superbed_api_key'] ?? '')) !== ''
+                ? sanitize_text_field(wp_unslash($_POST['superbed_api_key']))
+                : ($candidate['superbed_api_key'] ?? '');
+            $candidate['superbed_folder_id'] = sanitize_text_field(wp_unslash($_POST['superbed_folder_id'] ?? ''));
+            $result = self::withRuntimeConfig($candidate, function () {
+                return SuperbedStorage::testConnection();
             });
         } elseif ($candidate['storage_type'] === 's3') {
             $candidate['s3_endpoint'] = esc_url_raw(wp_unslash($_POST['s3_endpoint'] ?? ''));

@@ -98,6 +98,12 @@ class MediaProxy
                     return $oneImgUrl;
                 }
                 break;
+            case 'superbed':
+                $superbedUrl = SuperbedStorage::getCloudUrl($relativePath);
+                if ($superbedUrl !== '') {
+                    return $superbedUrl;
+                }
+                break;
             case 's3':
                 $customUrl = MediaHandler::config('s3_custom_url');
                 break;

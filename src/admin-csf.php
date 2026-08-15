@@ -16,8 +16,8 @@ function wpstow_csf_choice($value, array $allowed, $default)
 
 function wpstow_csf_route_default($legacyType, $category)
 {
-    $legacyType = wpstow_csf_choice($legacyType, ['oneimg', 's3', 'webdav', 'ftp'], 's3');
-    return $category !== 'image' && $legacyType === 'oneimg' ? 'local' : $legacyType;
+    $legacyType = wpstow_csf_choice($legacyType, ['oneimg', 'superbed', 's3', 'webdav', 'ftp'], 's3');
+    return $category !== 'image' && in_array($legacyType, ['oneimg', 'superbed'], true) ? 'local' : $legacyType;
 }
 
 function wpstow_csf_url($value)
@@ -48,16 +48,16 @@ function wpstow_csf_normalize_settings($data)
     $normalized = $previous;
 
     $normalized['switch'] = wpstow_csf_choice($data['switch'] ?? 'disable', ['enable', 'disable'], 'disable');
-    $legacyType = wpstow_csf_choice($previous['storage_type'] ?? 's3', ['oneimg', 's3', 'webdav', 'ftp'], 's3');
+    $legacyType = wpstow_csf_choice($previous['storage_type'] ?? 's3', ['oneimg', 'superbed', 's3', 'webdav', 'ftp'], 's3');
     $normalized['storage_type'] = $legacyType;
     $normalized['provider_config_type'] = wpstow_csf_choice(
         $data['provider_config_type'] ?? ($previous['provider_config_type'] ?? $legacyType),
-        ['oneimg', 's3', 'webdav', 'ftp'],
+        ['oneimg', 'superbed', 's3', 'webdav', 'ftp'],
         $legacyType
     );
     $normalized['image_storage_type'] = wpstow_csf_choice(
         $data['image_storage_type'] ?? ($previous['image_storage_type'] ?? wpstow_csf_route_default($legacyType, 'image')),
-        ['oneimg', 's3', 'webdav', 'ftp', 'local'],
+        ['oneimg', 'superbed', 's3', 'webdav', 'ftp', 'local'],
         wpstow_csf_route_default($legacyType, 'image')
     );
     foreach (['video', 'audio', 'other'] as $category) {
@@ -78,6 +78,10 @@ function wpstow_csf_normalize_settings($data)
 
     $normalized['oneimg_endpoint'] = wpstow_csf_url($providerValue('oneimg', 'oneimg_endpoint'));
     $normalized['oneimg_token'] = wpstow_csf_saved_secret($editingProvider === 'oneimg' ? $data : [], $previous, 'oneimg_token_input', 'oneimg_token');
+
+    $normalized['superbed_endpoint'] = wpstow_csf_url($providerValue('superbed', 'superbed_endpoint', 'https://api.superbed.cc'));
+    $normalized['superbed_api_key'] = wpstow_csf_saved_secret($editingProvider === 'superbed' ? $data : [], $previous, 'superbed_api_key_input', 'superbed_api_key');
+    $normalized['superbed_folder_id'] = wpstow_csf_text($providerValue('superbed', 'superbed_folder_id'));
 
     $normalized['s3_endpoint'] = wpstow_csf_url($providerValue('s3', 's3_endpoint'));
     $normalized['s3_bucket'] = wpstow_csf_text($providerValue('s3', 's3_bucket'));
@@ -103,6 +107,7 @@ function wpstow_csf_normalize_settings($data)
     $normalized['ftp_custom_url'] = wpstow_csf_url($providerValue('ftp', 'ftp_custom_url'));
 
     $normalized['localize_images'] = wpstow_csf_choice($data['localize_images'] ?? 'no', ['yes', 'no'], 'no');
+    $normalized['disable_image_subsizes'] = wpstow_csf_choice($data['disable_image_subsizes'] ?? 'no', ['yes', 'no'], 'no');
     $normalized['image_compress'] = wpstow_csf_choice($data['image_compress'] ?? 'no', ['yes', 'no'], 'no');
     $normalized['image_compress_quality'] = min(100, max(10, (int) ($data['image_compress_quality'] ?? 80)));
     $normalized['image_watermark'] = wpstow_csf_choice($data['image_watermark'] ?? 'no', ['yes', 'no'], 'no');
@@ -126,6 +131,7 @@ function wpstow_csf_normalize_settings($data)
 
     unset(
         $normalized['oneimg_token_input'],
+        $normalized['superbed_api_key_input'],
         $normalized['s3_access_key_input'],
         $normalized['s3_secret_key_input'],
         $normalized['webdav_password_input'],
@@ -156,6 +162,10 @@ function wpstow_csf_backend_configured($storageType)
         return MediaHandler::rawSetting('oneimg_endpoint', '') !== ''
             && MediaHandler::rawSetting('oneimg_token', '') !== '';
     }
+    if ($storageType === 'superbed') {
+        return MediaHandler::rawSetting('superbed_endpoint', 'https://api.superbed.cc') !== ''
+            && MediaHandler::rawSetting('superbed_api_key', '') !== '';
+    }
     if ($storageType === 's3') {
         return MediaHandler::rawSetting('s3_endpoint', '') !== ''
             && MediaHandler::rawSetting('s3_access_key', '') !== ''
@@ -177,7 +187,7 @@ function wpstow_csf_backend_configured($storageType)
 
 function wpstow_csf_render_status()
 {
-    $storageNames = ['oneimg' => 'OneImg', 's3' => 'S3 / R2', 'webdav' => 'WebDAV', 'ftp' => 'FTP / FTPS', 'local' => '仅本地'];
+    $storageNames = ['oneimg' => 'OneImg', 'superbed' => '聚合图床', 's3' => 'S3 / R2', 'webdav' => 'WebDAV', 'ftp' => 'FTP / FTPS', 'local' => '仅本地'];
     $categoryNames = ['image' => '图片', 'video' => '视频', 'audio' => '音频', 'other' => '其他'];
     $storageEnabled = MediaHandler::config('switch') === 'enable';
     $storageReady = MediaHandler::isStorageEnabledAndConfigured();
@@ -251,6 +261,55 @@ function wpstow_csf_render_diagnostics()
     echo '</div>';
 }
 
+function wpstow_csf_render_media_manager()
+{
+    echo '<div class="wpstow-library-manager" id="wpstow-library-manager">';
+    echo '<div class="wpstow-library-toolbar">';
+    echo '<label for="wpstow-library-category">文件类型</label>';
+    echo '<select id="wpstow-library-category">';
+    echo '<option value="all">全部附件</option>';
+    echo '<option value="image">图片</option>';
+    echo '<option value="video">视频</option>';
+    echo '<option value="audio">音频</option>';
+    echo '<option value="other">其他文件</option>';
+    echo '</select>';
+    echo '<button type="button" class="button button-secondary" id="wpstow-library-scan"><i class="fas fa-search"></i> 扫描媒体库</button>';
+    echo '<button type="button" class="button button-primary" id="wpstow-library-process" disabled><i class="fas fa-cloud-upload-alt"></i> 接管可处理项</button>';
+    echo '<button type="button" class="button" id="wpstow-library-stop" hidden><i class="fas fa-stop"></i> 停止扫描</button>';
+    echo '<span class="wpstow-queue-controls" hidden>';
+    echo '<button type="button" class="button" id="wpstow-queue-pause"><i class="fas fa-pause"></i> 暂停</button>';
+    echo '<button type="button" class="button" id="wpstow-queue-resume"><i class="fas fa-play"></i> 继续</button>';
+    echo '<button type="button" class="button wpstow-danger-button" id="wpstow-queue-cancel"><i class="fas fa-times"></i> 取消</button>';
+    echo '</span>';
+    echo '</div>';
+    echo '<p class="wpstow-library-persistence">接管任务保存在服务器数据库中，关闭本页后仍会继续；失败附件最多自动尝试 3 次。</p>';
+    echo '<div class="wpstow-library-progress" hidden>';
+    echo '<div><strong id="wpstow-library-progress-label">等待扫描</strong><span id="wpstow-library-progress-count"></span></div>';
+    echo '<progress id="wpstow-library-progress-bar" value="0" max="1"></progress>';
+    echo '</div>';
+    echo '<div class="wpstow-library-summary" aria-live="polite">';
+    foreach ([
+        'managed' => '已接管',
+        'ready' => '可接管',
+        'failed' => '上次失败',
+        'pending' => '正在处理',
+        'local' => '仅本地路由',
+        'missing' => '源文件缺失',
+        'unavailable' => '配置不可用',
+    ] as $key => $label) {
+        echo '<div><span>' . esc_html($label) . '</span><strong data-wpstow-count="' . esc_attr($key) . '">-</strong></div>';
+    }
+    echo '</div>';
+    echo '<div class="wpstow-library-notice" id="wpstow-library-notice" role="status" aria-live="polite">选择文件类型后扫描。</div>';
+    echo '<div class="wpstow-library-table-wrap" hidden>';
+    echo '<table class="widefat striped wpstow-library-table">';
+    echo '<thead><tr><th>附件</th><th>类型</th><th>状态</th><th>目标存储</th><th>详情</th></tr></thead>';
+    echo '<tbody id="wpstow-library-items"></tbody>';
+    echo '</table>';
+    echo '</div>';
+    echo '</div>';
+}
+
 function wpstow_csf_button_field($id, $title, array $options, $default, $desc = '', $dependency = null)
 {
     $field = [
@@ -278,12 +337,13 @@ function wpstow_register_csf_options()
 
     $key = 'wpstow_setting';
     $hasOneImgToken = MediaHandler::rawSetting('oneimg_token', '') !== '';
+    $hasSuperbedApiKey = MediaHandler::rawSetting('superbed_api_key', '') !== '';
     $hasS3AccessKey = MediaHandler::rawSetting('s3_access_key', '') !== '';
     $hasS3Secret = MediaHandler::rawSetting('s3_secret_key', '') !== '';
     $hasWebdavPassword = MediaHandler::rawSetting('webdav_password', '') !== '';
     $hasFtpPassword = MediaHandler::rawSetting('ftp_password', '') !== '';
     $ffmpegAvailable = VideoProcessor::checkFFmpeg();
-    $legacyType = wpstow_csf_choice(MediaHandler::rawSetting('storage_type', 's3'), ['oneimg', 's3', 'webdav', 'ftp'], 's3');
+    $legacyType = wpstow_csf_choice(MediaHandler::rawSetting('storage_type', 's3'), ['oneimg', 'superbed', 's3', 'webdav', 'ftp'], 's3');
     $routeDefaults = [];
     foreach (['image', 'video', 'audio', 'other'] as $category) {
         $routeDefaults[$category] = wpstow_csf_route_default($legacyType, $category);
@@ -317,13 +377,14 @@ function wpstow_register_csf_options()
         'title' => '存储配置',
         'icon' => 'fas fa-cloud',
         'fields' => [
-            ['type' => 'subheading', 'content' => '<span class="wpstow-step-title"><b>1</b> 按文件类型分配存储</span><small>选择“仅本地”时，该类型不会进入云端上传流程。OneImg 仅支持图片。</small>', 'class' => 'wpstow-step-heading'],
+            ['type' => 'subheading', 'content' => '<span class="wpstow-step-title"><b>1</b> 按文件类型分配存储</span><small>选择“仅本地”时，该类型不会进入云端上传流程。OneImg 和聚合图床仅支持图片。</small>', 'class' => 'wpstow-step-heading'],
             [
                 'id' => 'image_storage_type',
                 'title' => '图片',
                 'type' => 'select',
                 'options' => [
                     'oneimg' => 'OneImg 图床',
+                    'superbed' => '聚合图床',
                     's3' => 'S3 / R2 对象存储',
                     'webdav' => 'WebDAV',
                     'ftp' => 'FTP / FTPS',
@@ -379,6 +440,7 @@ function wpstow_register_csf_options()
                 'type' => 'select',
                 'options' => [
                     'oneimg' => 'OneImg 图床（仅图片）',
+                    'superbed' => '聚合图床（仅图片）',
                     's3' => 'S3 / R2 对象存储',
                     'webdav' => 'WebDAV',
                     'ftp' => 'FTP / FTPS',
@@ -389,6 +451,10 @@ function wpstow_register_csf_options()
             ['type' => 'subheading', 'content' => '<span class="wpstow-section-heading">连接 OneImg</span><small>开源图床程序，WPStow 通过 API 上传图片。<a href="https://github.com/onexru/oneimg" target="_blank" rel="noopener noreferrer">查看项目与部署说明</a></small>', 'class' => 'wpstow-step-heading wpstow-provider-heading', 'dependency' => ['provider_config_type', '==', 'oneimg']],
             ['id' => 'oneimg_endpoint', 'title' => '图床地址', 'type' => 'text', 'attributes' => ['type' => 'url'], 'placeholder' => 'https://img.example.com', 'desc' => '填写 OneImg 站点根地址，不要附加 <code>/api</code>。', 'dependency' => ['provider_config_type', '==', 'oneimg']],
             ['id' => 'oneimg_token_input', 'title' => 'API Token', 'type' => 'text', 'attributes' => ['type' => 'password', 'autocomplete' => 'new-password'], 'placeholder' => $hasOneImgToken ? '已保存，留空不变' : '请输入 OneImg API Token', 'desc' => '在 OneImg 后台生成。为安全起见，已保存的 Token 不会回显。', 'dependency' => ['provider_config_type', '==', 'oneimg']],
+            ['type' => 'subheading', 'content' => '<span class="wpstow-section-heading">连接聚合图床</span><small>使用 Superbed 官方 API 上传图片、获取直链并同步移入回收站。<a href="https://www.superbed.cn/help" target="_blank" rel="noopener noreferrer">查看 API 文档</a></small>', 'class' => 'wpstow-step-heading wpstow-provider-heading', 'dependency' => ['provider_config_type', '==', 'superbed']],
+            ['id' => 'superbed_endpoint', 'title' => 'API 地址', 'type' => 'text', 'attributes' => ['type' => 'url'], 'default' => 'https://api.superbed.cc', 'placeholder' => 'https://api.superbed.cc', 'desc' => '默认使用官方 API 地址；不要附加 <code>/api/v1</code>。', 'dependency' => ['provider_config_type', '==', 'superbed']],
+            ['id' => 'superbed_api_key_input', 'title' => 'API Key', 'type' => 'text', 'attributes' => ['type' => 'password', 'autocomplete' => 'new-password'], 'placeholder' => $hasSuperbedApiKey ? '已保存，留空不变' : '请输入聚合图床 API Key', 'desc' => '在聚合图床后台生成。为安全起见，已保存的 API Key 不会回显。', 'dependency' => ['provider_config_type', '==', 'superbed']],
+            ['id' => 'superbed_folder_id', 'title' => '目录 UUID', 'type' => 'text', 'attributes' => ['autocomplete' => 'off'], 'placeholder' => '可选，留空上传到根目录', 'desc' => '可在聚合图床目录列表或 API 中取得目标目录 UUID。', 'dependency' => ['provider_config_type', '==', 'superbed']],
             ['type' => 'subheading', 'content' => '<span class="wpstow-section-heading">连接 S3 / R2</span><small>适用于 Amazon S3、Cloudflare R2、MinIO 等 S3 兼容服务。</small>', 'class' => 'wpstow-step-heading wpstow-provider-heading', 'dependency' => ['provider_config_type', '==', 's3']],
             ['id' => 's3_endpoint', 'title' => 'Endpoint', 'type' => 'text', 'attributes' => ['type' => 'url'], 'placeholder' => 'https://s3.amazonaws.com', 'dependency' => ['provider_config_type', '==', 's3']],
             ['id' => 's3_bucket', 'title' => 'Bucket', 'type' => 'text', 'dependency' => ['provider_config_type', '==', 's3']],
@@ -427,6 +493,8 @@ function wpstow_register_csf_options()
         'fields' => [
             ['type' => 'subheading', 'content' => '<span class="wpstow-section-heading">外部图片入库</span><small>保存文章时，将正文里的外链或 Base64 图片纳入 WordPress 媒体库。</small>', 'class' => 'wpstow-step-heading'],
             wpstow_csf_button_field('localize_images', '自动本地化', ['no' => '关闭', 'yes' => '开启'], 'no', '开启后会由服务器请求外部图片；请确认站点允许访问的网络范围。'),
+            ['type' => 'subheading', 'content' => '<span class="wpstow-section-heading">文件生成策略</span><small>控制 WordPress、主题和其他插件是否为新图片生成派生文件。</small>', 'class' => 'wpstow-step-heading'],
+            wpstow_csf_button_field('disable_image_subsizes', '原图单文件模式', ['no' => '生成响应式尺寸', 'yes' => '只保留上传文件'], 'no', '启用后，新上传图片不生成 thumbnail、medium、large、主题尺寸、<code>-scaled</code> 或 <code>-rotated</code> 文件，也不自动转换格式。仅影响之后上传的图片；压缩和水印仍按下方开关执行。'),
             ['type' => 'subheading', 'content' => '<span class="wpstow-section-heading">上传前处理</span><small>以下处理会在文件转存前执行，未开启的功能不会改变原图。</small>', 'class' => 'wpstow-step-heading'],
             wpstow_csf_button_field('image_compress', '图片压缩', ['no' => '关闭', 'yes' => '启用'], 'no'),
             ['id' => 'image_compress_quality', 'title' => '压缩质量', 'type' => 'slider', 'min' => 10, 'max' => 100, 'step' => 1, 'unit' => '%', 'default' => 80, 'desc' => '建议 70–85，数值越小压缩越强。', 'dependency' => ['image_compress', '==', 'yes']],
@@ -459,6 +527,14 @@ function wpstow_register_csf_options()
     ]);
 
     CSF::createSection($key, [
+        'title' => '媒体接管',
+        'icon' => 'fas fa-tasks',
+        'fields' => [
+            ['type' => 'callback', 'function' => 'wpstow_csf_render_media_manager'],
+        ],
+    ]);
+
+    CSF::createSection($key, [
         'title' => '运行状态',
         'icon' => 'fas fa-heartbeat',
         'fields' => [
@@ -470,4 +546,4 @@ function wpstow_register_csf_options()
         ],
     ]);
 }
-add_action('after_setup_theme', 'wpstow_register_csf_options', 20);
+add_action('after_setup_theme', 'wpstow_register_csf_options', 110);

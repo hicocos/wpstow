@@ -1,10 +1,10 @@
-# WPStow 1.5.0
+# WPStow 1.9.0
 
-WPStow 是面向 WordPress 的云端媒体插件，支持 OneImg API、S3 兼容对象存储（包括 Cloudflare R2）、WebDAV 和 FTP/FTPS。
+WPStow 是面向 WordPress 的云端媒体插件，支持聚合图床（Superbed）、OneImg API、S3 兼容对象存储（包括 Cloudflare R2）、WebDAV 和 FTP/FTPS。
 
 项目主页：<https://github.com/hicocos/wpstow>
 
-插件在 WordPress 后台提供统一的“WPStow 设置”页面，配置保存在 `wpstow_setting` option 中。
+插件兼容标准 WordPress 主题，并在后台提供统一的“WPStow 设置”页面，配置保存在 `wpstow_setting` option 中。设置页使用 CSF；主题或其他插件已提供 CSF 时直接复用，否则加载 WPStow 内置版本，界面与配置结构保持一致。
 
 ## 工作流程
 
@@ -63,12 +63,35 @@ https://img.example.com/2026/08/example.jpg
 
 “存储配置”可以为四类附件分别选择存储源：
 
-- 图片：OneImg、S3/R2、WebDAV、FTP/FTPS 或仅本地
+- 图片：聚合图床、OneImg、S3/R2、WebDAV、FTP/FTPS 或仅本地
 - 视频：S3/R2、WebDAV、FTP/FTPS 或仅本地
 - 音频：S3/R2、WebDAV、FTP/FTPS 或仅本地
 - 其他：S3/R2、WebDAV、FTP/FTPS 或仅本地，包括 PDF、压缩包和文档等附件
 
 “当前配置服务”只控制下方显示哪一组连接参数，不会改变分类路由。切换服务后，其他服务已经保存的凭据会继续保留。附件上传成功后会记录实际使用的存储源，之后即使修改分类路由，已有附件仍从原存储源读取和删除。
+
+## 媒体库统一接管
+
+“媒体接管”页面可以按全部、图片、视频、音频或其他文件扫描现有媒体库，并将附件归类为：
+
+- 已接管
+- 可接管或上次失败
+- 正在处理
+- 仅本地路由
+- 源文件缺失
+- 配置不可用
+
+扫描采用只读分页，不会上传或修改附件。点击“接管可处理项”后会创建服务器持久任务；任务游标、统计、重试时间和租约均保存在独立数据库表中，浏览器刷新或关闭不会丢失进度。后台可以暂停、继续或取消任务，正在上传的附件会先安全结束。
+
+队列由 WordPress Cron 驱动，附件始终串行处理；一次工作器调用在 20 秒预算内最多连续处理 3 个附件，大文件不会并发挤占服务器资源。单个附件失败会按 60 秒、300 秒退避，最多尝试 3 次；连续失败后记录错误并继续下一项。每分钟看门狗会恢复因 PHP 进程中断或租约超时而搁置的任务；工作器自身连续异常 3 次时会自动暂停，避免无限调度。低流量站点建议配置系统 Cron 定期请求 `wp-cron.php`，确保任务不依赖前台访问触发。
+
+批量接管与媒体库单文件处理共用附件级锁，避免重复上传。上传仍遵守完整事务：主文件和全部缩略图均成功后才写入接管状态；任一对象失败都会回滚本轮远端对象并保留本地文件。若配置为“上传后删除”本地副本，执行前会再次确认。
+
+## 原图单文件模式
+
+在“图片处理”中启用“原图单文件模式”后，新上传图片不会生成 WordPress 的 `thumbnail`、`medium`、`large`、主题/插件自定义尺寸，也不会产生 `-scaled`、`-rotated` 或自动格式转换文件。附件元数据仍会保留原图宽高等信息，媒体库和前台在请求缩略尺寸时会回退使用原图。
+
+该设置只影响启用后新上传或重新生成尺寸的图片，不会自动删除已有附件的历史缩略图。图片压缩和水印是独立功能；若启用，它们仍会修改唯一的上传文件。
 
 ## OneImg API 配置
 
@@ -80,6 +103,17 @@ https://img.example.com/2026/08/example.jpg
 - OneImg 可能按服务端策略把 PNG/JPEG 转码为 WebP；代理读取时会采用远端返回的实际 MIME 类型
 
 配置后先点击“测试连接”，确认 API 鉴权和目标存储源，再执行“上传自检”。
+
+## 聚合图床配置
+
+- API 地址：默认 `https://api.superbed.cc`，通常无需修改，不要附加 `/api/v1`
+- API Key：聚合图床后台生成的 API Key；插件通过 `X-API-Key` 请求头鉴权，已保存的值不会在后台回显
+- 目录 UUID：可选；留空上传到根目录，填写后上传到指定目录
+- 聚合图床仅接收图片，因此不会出现在视频、音频和其他文件的存储选项中
+- WordPress 原图和每个缩略图会分别上传；插件保存文件 UUID 与直链，删除附件时同步将远端文件移入回收站
+- 聚合图床返回的图片地址由浏览器直接访问，不经过 WordPress/PHP 代理
+
+配置后先点击“测试连接”，再执行“上传自检”。上传自检会创建一张临时图片并在成功后立即移入聚合图床回收站。
 
 ## 安全与数据保护
 
@@ -128,7 +162,7 @@ R2 控制台会把 `/` 前缀显示得像文件夹，但对象存储本质上保
 
 ## 数据安全与备份
 
-建议定期备份插件目录和 WordPress 数据库。设置保存在 `wpstow_setting` option 中；附件状态保存在 `_wpstow_uploaded`、`_wpstow_cloud_key`、`_wpstow_storage_type` 和 `_wpstow_storage_manifest` 等 post meta 中。
+建议定期备份插件目录和 WordPress 数据库。设置保存在 `wpstow_setting` option 中；附件状态保存在 `_wpstow_uploaded`、`_wpstow_cloud_key`、`_wpstow_storage_type` 和 `_wpstow_storage_manifest` 等 post meta 中。持久任务保存在 `{prefix}_wpstow_media_jobs` 表中，完成或取消超过 30 天的历史任务会在新建任务时清理。批量接管使用的 `_wpstow_batch_lock`、`_wpstow_pending` 和 `_wpstow_pending_at` 是临时状态，任务结束后会自动清除，超过 15 分钟的锁会在下次接管时回收。
 
 插件默认保留本地副本并启用云端读取失败回退。确认远端存储稳定后，可以在“存储配置”中按需调整副本与访问策略。
 
@@ -145,4 +179,4 @@ for file in static/*.js; do node --check "$file"; done
 
 ## 许可证
 
-[MIT](LICENSE)
+WPStow 自有代码使用 [MIT](LICENSE)；内置 Codestar Framework 2.2.0 使用 [GPL-2.0](vendor/codestar-framework/LICENSE.md)。

@@ -1,4 +1,4 @@
-/* WPStow additions for the Zibll CSF admin theme. */
+/* WPStow additions for the Codestar Framework admin interface. */
 .wpstow-csf {
     --wpstow-accent: #0991f5;
     --wpstow-accent-soft: rgba(9, 145, 245, .07);
@@ -292,6 +292,192 @@
     width: 100%;
 }
 
+.wpstow-library-manager {
+    width: 100%;
+    color: var(--wpstow-text);
+}
+
+.wpstow-library-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.wpstow-library-toolbar label {
+    color: var(--wpstow-muted);
+    font-weight: 600;
+}
+
+.wpstow-library-toolbar select {
+    min-width: 150px;
+}
+
+.wpstow-library-toolbar .button i {
+    margin-right: 6px;
+}
+
+.wpstow-queue-controls {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.wpstow-queue-controls[hidden] {
+    display: none;
+}
+
+.wpstow-library-persistence {
+    margin: 10px 0 0;
+    color: var(--wpstow-muted);
+    font-size: 12px;
+}
+
+.wpstow-library-progress {
+    margin-top: 18px;
+}
+
+.wpstow-library-progress > div {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 7px;
+    color: var(--wpstow-muted);
+    font-size: 12px;
+}
+
+.wpstow-library-progress strong {
+    color: var(--wpstow-text);
+}
+
+.wpstow-library-progress progress {
+    display: block;
+    width: 100%;
+    height: 8px;
+    overflow: hidden;
+    border: 0;
+    border-radius: 4px;
+    background: #e8ebee;
+}
+
+.wpstow-library-progress progress::-webkit-progress-bar {
+    background: #e8ebee;
+}
+
+.wpstow-library-progress progress::-webkit-progress-value {
+    background: var(--wpstow-accent);
+}
+
+.wpstow-library-progress progress::-moz-progress-bar {
+    background: var(--wpstow-accent);
+}
+
+.wpstow-library-summary {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    margin-top: 18px;
+    border: 1px solid var(--wpstow-border);
+    border-radius: 8px;
+    background: var(--wpstow-surface);
+}
+
+.wpstow-library-summary > div {
+    min-width: 0;
+    padding: 14px;
+    border-right: 1px solid var(--wpstow-border);
+}
+
+.wpstow-library-summary > div:last-child {
+    border-right: 0;
+}
+
+.wpstow-library-summary span,
+.wpstow-library-summary strong {
+    display: block;
+}
+
+.wpstow-library-summary span {
+    min-height: 32px;
+    color: var(--wpstow-muted);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.wpstow-library-summary strong {
+    margin-top: 4px;
+    color: var(--wpstow-text);
+    font-size: 22px;
+    line-height: 1;
+}
+
+.wpstow-library-notice {
+    margin-top: 14px;
+    padding: 10px 12px;
+    border-left: 3px solid #b7bdc3;
+    background: var(--wpstow-subtle);
+    color: var(--wpstow-muted);
+}
+
+.wpstow-library-notice.is-loading { border-left-color: var(--wpstow-accent); color: var(--wpstow-accent); }
+.wpstow-library-notice.is-success { border-left-color: var(--wpstow-success); color: var(--wpstow-success); }
+.wpstow-library-notice.is-warning { border-left-color: var(--wpstow-warning); color: var(--wpstow-warning); }
+.wpstow-library-notice.is-error { border-left-color: var(--wpstow-danger); color: var(--wpstow-danger); }
+
+.wpstow-library-table-wrap {
+    margin-top: 14px;
+    overflow-x: auto;
+}
+
+.wpstow-library-table {
+    min-width: 760px;
+    table-layout: fixed;
+}
+
+.wpstow-library-table th:nth-child(1) { width: 22%; }
+.wpstow-library-table th:nth-child(2) { width: 17%; }
+.wpstow-library-table th:nth-child(3) { width: 13%; }
+.wpstow-library-table th:nth-child(4) { width: 14%; }
+.wpstow-library-table th:nth-child(5) { width: 34%; }
+
+.wpstow-library-table td {
+    vertical-align: middle;
+    overflow-wrap: anywhere;
+}
+
+.wpstow-library-table td:first-child small {
+    display: block;
+    margin-top: 3px;
+    color: var(--wpstow-muted);
+}
+
+.wpstow-library-status {
+    display: inline-block;
+    padding: 3px 7px;
+    border-radius: 4px;
+    background: rgba(122, 130, 138, .1);
+    color: var(--wpstow-muted);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.wpstow-library-status.is-managed,
+.wpstow-library-status.is-ready {
+    color: var(--wpstow-success);
+    background: rgba(32, 166, 101, .1);
+}
+
+.wpstow-library-status.is-failed,
+.wpstow-library-status.is-missing {
+    color: var(--wpstow-danger);
+    background: rgba(238, 77, 90, .09);
+}
+
+.wpstow-library-status.is-pending,
+.wpstow-library-status.is-unavailable {
+    color: var(--wpstow-warning);
+    background: rgba(215, 139, 23, .1);
+}
+
 .wpstow-empty-log {
     display: flex;
     flex-direction: column;
@@ -316,6 +502,22 @@
     .wpstow-csf-status-item:nth-child(even),
     .wpstow-csf-status-item:last-child {
         border-right: 0;
+    }
+
+    .wpstow-library-summary {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .wpstow-library-summary > div {
+        border-bottom: 1px solid var(--wpstow-border);
+    }
+
+    .wpstow-library-summary > div:nth-child(4n) {
+        border-right: 0;
+    }
+
+    .wpstow-library-summary > div:nth-last-child(-n+3) {
+        border-bottom: 0;
     }
 
     .wpstow-csf-status-item {
@@ -361,5 +563,51 @@
 
     .wpstow-log {
         min-height: 220px;
+    }
+
+    .wpstow-library-toolbar {
+        align-items: stretch;
+    }
+
+    .wpstow-library-toolbar label {
+        width: 100%;
+    }
+
+    .wpstow-library-toolbar select {
+        width: 100%;
+        max-width: none;
+    }
+
+    .wpstow-library-toolbar .button {
+        min-height: 36px;
+        flex: 1 1 150px;
+    }
+
+    .wpstow-queue-controls {
+        width: 100%;
+    }
+
+    .wpstow-queue-controls .button {
+        flex: 1 1 100px;
+    }
+
+    .wpstow-library-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .wpstow-library-summary > div,
+    .wpstow-library-summary > div:nth-child(4n) {
+        border-right: 1px solid var(--wpstow-border);
+        border-bottom: 1px solid var(--wpstow-border);
+    }
+
+    .wpstow-library-summary > div:nth-child(2n) {
+        border-right: 0;
+    }
+
+    .wpstow-library-summary > div:last-child {
+        grid-column: 1 / -1;
+        border-right: 0;
+        border-bottom: 0;
     }
 }
