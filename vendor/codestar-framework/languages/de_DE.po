@@ -1,10 +1,8 @@
-# Copyright (C) 2020 Codestar
+# Copyright (C) 2021 Codestar
 # This file is distributed under the same license as the Codestar Framework package.
 msgid ""
 msgstr ""
-"Project-Id-Version: Codestar Framework 2.1.7.x\n"
-"Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/codestar-"
-"framework\n"
+"Project-Id-Version: Codestar Framework 2.2.1\n"
 "POT-Creation-Date: \n"
 "PO-Revision-Date: \n"
 "Last-Translator: \n"
@@ -72,8 +70,7 @@ msgstr "Zurücksetzen"
 
 #: classes/admin-options.class.php:570 classes/admin-options.class.php:693
 msgid "Are you sure you want to reset all settings to default values?"
-msgstr ""
-"Möchtest du wirklich alle Einstellungen auf ihre Standardwerte zurücksetzen?"
+msgstr "Möchtest du wirklich alle Einstellungen auf ihre Standardwerte zurücksetzen?"
 
 #: classes/admin-options.class.php:668 classes/comment-options.class.php:196
 #: classes/metabox-options.class.php:265 fields/button_set/button_set.php:56

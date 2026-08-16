@@ -59,7 +59,7 @@ if ( ! class_exists( 'CSF_Field_wp_editor' ) ) {
 
         $this->setup_wp_editor_settings();
 
-        add_action( 'print_default_editor_scripts', array( &$this, 'setup_wp_editor_media_buttons' ) );
+        add_action( 'print_default_editor_scripts', array( $this, 'setup_wp_editor_media_buttons' ) );
 
       }
 
@@ -68,10 +68,14 @@ if ( ! class_exists( 'CSF_Field_wp_editor' ) ) {
     // Setup wp editor media buttons
     public function setup_wp_editor_media_buttons() {
 
+      if ( ! function_exists( 'media_buttons' ) ) {
+        return;
+      }
+
       ob_start();
-      echo '<div class="wp-media-buttons">';
-      do_action( 'media_buttons' );
-      echo '</div>';
+        echo '<div class="wp-media-buttons">';
+          do_action( 'media_buttons' );
+        echo '</div>';
       $media_buttons = ob_get_clean();
 
       echo '<script type="text/javascript">';

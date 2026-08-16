@@ -42,7 +42,7 @@ if ( ! class_exists( 'WP_Customize_Control_CSF' ) && class_exists( 'WP_Customize
     public $field  = '';
     public $unique = '';
 
-    protected function render() {
+    public function render() {
 
       $depend  = '';
       $visible = '';
@@ -103,6 +103,7 @@ if ( ! class_exists( 'WP_Customize_Control_CSF' ) && class_exists( 'WP_Customize
         'fieldset',
         'group',
         'image_select',
+        'link',
         'link_color',
         'media',
         'palette',

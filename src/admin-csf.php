@@ -1,6 +1,7 @@
 <?php
 
 use WPStow\MediaHandler;
+use WPStow\FileNaming;
 use WPStow\Utils;
 use WPStow\VideoProcessor;
 
@@ -16,14 +17,14 @@ function wpstow_csf_choice($value, array $allowed, $default)
 
 function wpstow_csf_route_default($legacyType, $category)
 {
-    $legacyType = wpstow_csf_choice($legacyType, ['oneimg', 'superbed', 's3', 'webdav', 'ftp'], 's3');
+    $legacyType = wpstow_csf_choice($legacyType, ['oneimg', 'superbed', 's3', 'r2', 'webdav', 'ftp'], 's3');
     return $category !== 'image' && in_array($legacyType, ['oneimg', 'superbed'], true) ? 'local' : $legacyType;
 }
 
 function wpstow_csf_url($value)
 {
     $value = trim((string) $value);
-    return $value === '' ? '' : esc_url_raw($value);
+    return $value === '' ? '' : esc_url_raw($value, ['http', 'https']);
 }
 
 function wpstow_csf_text($value)
@@ -34,7 +35,7 @@ function wpstow_csf_text($value)
 function wpstow_csf_saved_secret(array $data, array $previous, $inputKey, $storageKey)
 {
     $value = isset($data[$inputKey]) ? trim((string) $data[$inputKey]) : '';
-    return $value === '' ? (string) ($previous[$storageKey] ?? '') : sanitize_text_field($value);
+    return $value === '' ? (string) ($previous[$storageKey] ?? '') : Utils::sanitizeSecret($value);
 }
 
 function wpstow_csf_normalize_settings($data)
@@ -48,22 +49,22 @@ function wpstow_csf_normalize_settings($data)
     $normalized = $previous;
 
     $normalized['switch'] = wpstow_csf_choice($data['switch'] ?? 'disable', ['enable', 'disable'], 'disable');
-    $legacyType = wpstow_csf_choice($previous['storage_type'] ?? 's3', ['oneimg', 'superbed', 's3', 'webdav', 'ftp'], 's3');
+    $legacyType = wpstow_csf_choice($previous['storage_type'] ?? 's3', ['oneimg', 'superbed', 's3', 'r2', 'webdav', 'ftp'], 's3');
     $normalized['storage_type'] = $legacyType;
     $normalized['provider_config_type'] = wpstow_csf_choice(
         $data['provider_config_type'] ?? ($previous['provider_config_type'] ?? $legacyType),
-        ['oneimg', 'superbed', 's3', 'webdav', 'ftp'],
+        ['oneimg', 'superbed', 's3', 'r2', 'webdav', 'ftp'],
         $legacyType
     );
     $normalized['image_storage_type'] = wpstow_csf_choice(
         $data['image_storage_type'] ?? ($previous['image_storage_type'] ?? wpstow_csf_route_default($legacyType, 'image')),
-        ['oneimg', 'superbed', 's3', 'webdav', 'ftp', 'local'],
+        ['oneimg', 'superbed', 's3', 'r2', 'webdav', 'ftp', 'local'],
         wpstow_csf_route_default($legacyType, 'image')
     );
     foreach (['video', 'audio', 'other'] as $category) {
         $key = $category . '_storage_type';
         $default = wpstow_csf_route_default($legacyType, $category);
-        $normalized[$key] = wpstow_csf_choice($data[$key] ?? ($previous[$key] ?? $default), ['s3', 'webdav', 'ftp', 'local'], $default);
+        $normalized[$key] = wpstow_csf_choice($data[$key] ?? ($previous[$key] ?? $default), ['s3', 'r2', 'webdav', 'ftp', 'local'], $default);
     }
     $editingProvider = $normalized['provider_config_type'];
     $providerValue = static function ($provider, $key, $default = '') use ($data, $previous, $editingProvider) {
@@ -75,6 +76,15 @@ function wpstow_csf_normalize_settings($data)
     $normalized['keep_local'] = wpstow_csf_choice($data['keep_local'] ?? 'yes', ['yes', 'no'], 'yes');
     $normalized['media_url_mode'] = wpstow_csf_choice($data['media_url_mode'] ?? 'cloud', ['cloud', 'local'], 'cloud');
     $normalized['cloud_fallback_local'] = wpstow_csf_choice($data['cloud_fallback_local'] ?? 'yes', ['yes', 'no'], 'yes');
+    $normalized['filename_preset'] = wpstow_csf_choice(
+        $data['filename_preset'] ?? ($previous['filename_preset'] ?? FileNaming::DEFAULT_PRESET),
+        array_keys(FileNaming::getPresets()),
+        FileNaming::DEFAULT_PRESET
+    );
+    $filenameTemplate = trim((string) ($data['filename_template'] ?? ($previous['filename_template'] ?? FileNaming::DEFAULT_TEMPLATE)));
+    $normalized['filename_template'] = FileNaming::validateTemplate($filenameTemplate) === ''
+        ? $filenameTemplate
+        : (string) ($previous['filename_template'] ?? FileNaming::DEFAULT_TEMPLATE);
 
     $normalized['oneimg_endpoint'] = wpstow_csf_url($providerValue('oneimg', 'oneimg_endpoint'));
     $normalized['oneimg_token'] = wpstow_csf_saved_secret($editingProvider === 'oneimg' ? $data : [], $previous, 'oneimg_token_input', 'oneimg_token');
@@ -90,6 +100,13 @@ function wpstow_csf_normalize_settings($data)
     $normalized['s3_region'] = wpstow_csf_text($providerValue('s3', 's3_region', 'us-east-1'));
     $normalized['s3_path_style'] = wpstow_csf_choice($providerValue('s3', 's3_path_style', 'no'), ['yes', 'no'], 'no');
     $normalized['s3_custom_url'] = wpstow_csf_url($providerValue('s3', 's3_custom_url'));
+
+    $normalized['r2_endpoint'] = wpstow_csf_url($providerValue('r2', 'r2_endpoint'));
+    $normalized['r2_bucket'] = wpstow_csf_text($providerValue('r2', 'r2_bucket'));
+    $normalized['r2_access_key'] = wpstow_csf_saved_secret($editingProvider === 'r2' ? $data : [], $previous, 'r2_access_key_input', 'r2_access_key');
+    $normalized['r2_secret_key'] = wpstow_csf_saved_secret($editingProvider === 'r2' ? $data : [], $previous, 'r2_secret_key_input', 'r2_secret_key');
+    $normalized['r2_custom_url'] = wpstow_csf_url($providerValue('r2', 'r2_custom_url'));
+    $normalized['r2_presign_ttl'] = min(604800, max(60, (int) $providerValue('r2', 'r2_presign_ttl', 900)));
 
     $normalized['webdav_endpoint'] = wpstow_csf_url($providerValue('webdav', 'webdav_endpoint'));
     $normalized['webdav_path'] = wpstow_csf_text($providerValue('webdav', 'webdav_path', '/'));
@@ -134,6 +151,8 @@ function wpstow_csf_normalize_settings($data)
         $normalized['superbed_api_key_input'],
         $normalized['s3_access_key_input'],
         $normalized['s3_secret_key_input'],
+        $normalized['r2_access_key_input'],
+        $normalized['r2_secret_key_input'],
         $normalized['webdav_password_input'],
         $normalized['ftp_password_input']
     );
@@ -156,6 +175,46 @@ function wpstow_csf_validate_video_feature($value)
     return '';
 }
 
+function wpstow_csf_validate_filename_template($value)
+{
+    return FileNaming::validateTemplate($value);
+}
+
+function wpstow_csf_render_filename_guide()
+{
+    $presetTemplates = FileNaming::getPresetTemplates();
+    $preset = (string) MediaHandler::config('filename_preset');
+    $template = (string) MediaHandler::config('filename_template');
+    $example = FileNaming::generateFilename('Summer Photo.jpg', $preset, $template, strtotime('2026-08-16 12:34:56 UTC'));
+
+    echo '<div class="wpstow-naming-guide">';
+    echo '<div class="wpstow-naming-preview"><span>当前规则示例</span><code id="wpstow-naming-preview">2026/08/' . esc_html($example) . '</code><small id="wpstow-naming-validation" class="is-success">语法有效，扩展名会自动保留</small></div>';
+    echo '<div class="wpstow-naming-help">';
+    echo '<div><strong>可用字段</strong><dl>';
+    foreach ([
+        '{name}' => '原文件名主体，最长取 80 个字符',
+        '{year} / {month} / {day}' => '四位年、两位月、两位日',
+        '{hour} / {minute} / {second}' => '两位时、分、秒',
+        '{timestamp}' => 'Unix 秒级时间戳',
+        '{random:N}' => '随机码，N 允许 8–32；省略 N 时为 8',
+    ] as $token => $meaning) {
+        echo '<dt><code>' . esc_html($token) . '</code></dt><dd>' . esc_html($meaning) . '</dd>';
+    }
+    echo '</dl></div>';
+    echo '<div><strong>预设示例</strong><dl>';
+    foreach ([
+        $presetTemplates['short'] => 'k7m2q9v4.jpg',
+        $presetTemplates['date_random'] => '20260816-k7m2q9v4.jpg',
+        $presetTemplates['original_random'] => 'Summer-Photo-k7m2q9v4.jpg',
+        $presetTemplates['timestamp_random'] => '1786883696-k7m2q9v4.jpg',
+    ] as $rule => $result) {
+        echo '<dt><code>' . esc_html($rule) . '</code></dt><dd><code>' . esc_html($result) . '</code></dd>';
+    }
+    echo '</dl></div></div>';
+    echo '<p class="wpstow-naming-note">规则仅影响之后上传的文件。启用 WordPress 年月目录时仍保留路径，例如 <code>2026/08/</code>；扩展名自动继承，无需写进模板。S3、R2、WebDAV 和 FTP 会严格使用该名称；OneImg 与聚合图床若服务端二次改名，以服务端返回结果为准。</p>';
+    echo '</div>';
+}
+
 function wpstow_csf_backend_configured($storageType)
 {
     if ($storageType === 'oneimg') {
@@ -172,6 +231,12 @@ function wpstow_csf_backend_configured($storageType)
             && MediaHandler::rawSetting('s3_secret_key', '') !== ''
             && MediaHandler::rawSetting('s3_bucket', '') !== '';
     }
+    if ($storageType === 'r2') {
+        return MediaHandler::rawSetting('r2_endpoint', '') !== ''
+            && MediaHandler::rawSetting('r2_access_key', '') !== ''
+            && MediaHandler::rawSetting('r2_secret_key', '') !== ''
+            && MediaHandler::rawSetting('r2_bucket', '') !== '';
+    }
     if ($storageType === 'webdav') {
         return MediaHandler::rawSetting('webdav_endpoint', '') !== ''
             && MediaHandler::rawSetting('webdav_username', '') !== ''
@@ -187,7 +252,7 @@ function wpstow_csf_backend_configured($storageType)
 
 function wpstow_csf_render_status()
 {
-    $storageNames = ['oneimg' => 'OneImg', 'superbed' => '聚合图床', 's3' => 'S3 / R2', 'webdav' => 'WebDAV', 'ftp' => 'FTP / FTPS', 'local' => '仅本地'];
+    $storageNames = ['oneimg' => 'OneImg', 'superbed' => '聚合图床', 's3' => 'S3', 'r2' => 'Cloudflare R2', 'webdav' => 'WebDAV', 'ftp' => 'FTP / FTPS', 'local' => '仅本地'];
     $categoryNames = ['image' => '图片', 'video' => '视频', 'audio' => '音频', 'other' => '其他'];
     $storageEnabled = MediaHandler::config('switch') === 'enable';
     $storageReady = MediaHandler::isStorageEnabledAndConfigured();
@@ -340,10 +405,12 @@ function wpstow_register_csf_options()
     $hasSuperbedApiKey = MediaHandler::rawSetting('superbed_api_key', '') !== '';
     $hasS3AccessKey = MediaHandler::rawSetting('s3_access_key', '') !== '';
     $hasS3Secret = MediaHandler::rawSetting('s3_secret_key', '') !== '';
+    $hasR2AccessKey = MediaHandler::rawSetting('r2_access_key', '') !== '';
+    $hasR2Secret = MediaHandler::rawSetting('r2_secret_key', '') !== '';
     $hasWebdavPassword = MediaHandler::rawSetting('webdav_password', '') !== '';
     $hasFtpPassword = MediaHandler::rawSetting('ftp_password', '') !== '';
     $ffmpegAvailable = VideoProcessor::checkFFmpeg();
-    $legacyType = wpstow_csf_choice(MediaHandler::rawSetting('storage_type', 's3'), ['oneimg', 'superbed', 's3', 'webdav', 'ftp'], 's3');
+    $legacyType = wpstow_csf_choice(MediaHandler::rawSetting('storage_type', 's3'), ['oneimg', 'superbed', 's3', 'r2', 'webdav', 'ftp'], 's3');
     $routeDefaults = [];
     foreach (['image', 'video', 'audio', 'other'] as $category) {
         $routeDefaults[$category] = wpstow_csf_route_default($legacyType, $category);
@@ -385,7 +452,8 @@ function wpstow_register_csf_options()
                 'options' => [
                     'oneimg' => 'OneImg 图床',
                     'superbed' => '聚合图床',
-                    's3' => 'S3 / R2 对象存储',
+                    's3' => 'S3 兼容对象存储',
+                    'r2' => 'Cloudflare R2',
                     'webdav' => 'WebDAV',
                     'ftp' => 'FTP / FTPS',
                     'local' => '仅本地',
@@ -398,7 +466,8 @@ function wpstow_register_csf_options()
                 'title' => '视频',
                 'type' => 'select',
                 'options' => [
-                    's3' => 'S3 / R2 对象存储',
+                    's3' => 'S3 兼容对象存储',
+                    'r2' => 'Cloudflare R2',
                     'webdav' => 'WebDAV',
                     'ftp' => 'FTP / FTPS',
                     'local' => '仅本地',
@@ -411,7 +480,8 @@ function wpstow_register_csf_options()
                 'title' => '音频',
                 'type' => 'select',
                 'options' => [
-                    's3' => 'S3 / R2 对象存储',
+                    's3' => 'S3 兼容对象存储',
+                    'r2' => 'Cloudflare R2',
                     'webdav' => 'WebDAV',
                     'ftp' => 'FTP / FTPS',
                     'local' => '仅本地',
@@ -424,7 +494,8 @@ function wpstow_register_csf_options()
                 'title' => '其他文件',
                 'type' => 'select',
                 'options' => [
-                    's3' => 'S3 / R2 对象存储',
+                    's3' => 'S3 兼容对象存储',
+                    'r2' => 'Cloudflare R2',
                     'webdav' => 'WebDAV',
                     'ftp' => 'FTP / FTPS',
                     'local' => '仅本地',
@@ -441,7 +512,8 @@ function wpstow_register_csf_options()
                 'options' => [
                     'oneimg' => 'OneImg 图床（仅图片）',
                     'superbed' => '聚合图床（仅图片）',
-                    's3' => 'S3 / R2 对象存储',
+                    's3' => 'S3 兼容对象存储',
+                    'r2' => 'Cloudflare R2',
                     'webdav' => 'WebDAV',
                     'ftp' => 'FTP / FTPS',
                 ],
@@ -455,14 +527,21 @@ function wpstow_register_csf_options()
             ['id' => 'superbed_endpoint', 'title' => 'API 地址', 'type' => 'text', 'attributes' => ['type' => 'url'], 'default' => 'https://api.superbed.cc', 'placeholder' => 'https://api.superbed.cc', 'desc' => '默认使用官方 API 地址；不要附加 <code>/api/v1</code>。', 'dependency' => ['provider_config_type', '==', 'superbed']],
             ['id' => 'superbed_api_key_input', 'title' => 'API Key', 'type' => 'text', 'attributes' => ['type' => 'password', 'autocomplete' => 'new-password'], 'placeholder' => $hasSuperbedApiKey ? '已保存，留空不变' : '请输入聚合图床 API Key', 'desc' => '在聚合图床后台生成。为安全起见，已保存的 API Key 不会回显。', 'dependency' => ['provider_config_type', '==', 'superbed']],
             ['id' => 'superbed_folder_id', 'title' => '目录 UUID', 'type' => 'text', 'attributes' => ['autocomplete' => 'off'], 'placeholder' => '可选，留空上传到根目录', 'desc' => '可在聚合图床目录列表或 API 中取得目标目录 UUID。', 'dependency' => ['provider_config_type', '==', 'superbed']],
-            ['type' => 'subheading', 'content' => '<span class="wpstow-section-heading">连接 S3 / R2</span><small>适用于 Amazon S3、Cloudflare R2、MinIO 等 S3 兼容服务。</small>', 'class' => 'wpstow-step-heading wpstow-provider-heading', 'dependency' => ['provider_config_type', '==', 's3']],
+            ['type' => 'subheading', 'content' => '<span class="wpstow-section-heading">连接 S3</span><small>适用于 Amazon S3、MinIO 及其他 S3 兼容服务。</small>', 'class' => 'wpstow-step-heading wpstow-provider-heading', 'dependency' => ['provider_config_type', '==', 's3']],
             ['id' => 's3_endpoint', 'title' => 'Endpoint', 'type' => 'text', 'attributes' => ['type' => 'url'], 'placeholder' => 'https://s3.amazonaws.com', 'dependency' => ['provider_config_type', '==', 's3']],
             ['id' => 's3_bucket', 'title' => 'Bucket', 'type' => 'text', 'dependency' => ['provider_config_type', '==', 's3']],
             ['id' => 's3_access_key_input', 'title' => 'Access Key ID', 'type' => 'text', 'attributes' => ['autocomplete' => 'off'], 'placeholder' => $hasS3AccessKey ? '已保存，留空不变' : '请输入 Access Key ID', 'desc' => '不会回显已保存值；输入新值才会替换。', 'dependency' => ['provider_config_type', '==', 's3']],
             ['id' => 's3_secret_key_input', 'title' => 'Secret Key', 'type' => 'text', 'attributes' => ['type' => 'password', 'autocomplete' => 'new-password'], 'placeholder' => $hasS3Secret ? '已保存，留空不变' : '请输入 Secret Key', 'desc' => '留空保存表示保留原值。', 'dependency' => ['provider_config_type', '==', 's3']],
-            ['id' => 's3_region', 'title' => 'Region', 'type' => 'text', 'default' => 'us-east-1', 'placeholder' => 'us-east-1 / auto', 'desc' => 'Cloudflare R2 常用 auto，MinIO 通常可用 us-east-1。', 'dependency' => ['provider_config_type', '==', 's3']],
+            ['id' => 's3_region', 'title' => 'Region', 'type' => 'text', 'default' => 'us-east-1', 'placeholder' => 'us-east-1', 'dependency' => ['provider_config_type', '==', 's3']],
             wpstow_csf_button_field('s3_path_style', '路径样式', ['no' => '虚拟主机样式', 'yes' => '路径样式'], 'no', '', ['provider_config_type', '==', 's3']),
             ['id' => 's3_custom_url', 'title' => '自定义访问 URL', 'type' => 'text', 'attributes' => ['type' => 'url'], 'placeholder' => 'https://cdn.example.com', 'desc' => '公开 CDN 域名填这里；私有桶继续使用代理。', 'dependency' => ['provider_config_type', '==', 's3']],
+            ['type' => 'subheading', 'content' => '<span class="wpstow-section-heading">连接 Cloudflare R2</span><small>私有桶无需开启公开访问；WPStow 会以固定媒体 URL 跳转到短期预签名地址，文件流量不经过本站 PHP。</small>', 'class' => 'wpstow-step-heading wpstow-provider-heading', 'dependency' => ['provider_config_type', '==', 'r2']],
+            ['id' => 'r2_endpoint', 'title' => 'S3 API Endpoint', 'type' => 'text', 'attributes' => ['type' => 'url'], 'placeholder' => 'https://ACCOUNT_ID.r2.cloudflarestorage.com', 'desc' => '填写 R2 的 S3 API Endpoint，不要包含 Bucket 名。', 'dependency' => ['provider_config_type', '==', 'r2']],
+            ['id' => 'r2_bucket', 'title' => 'Bucket', 'type' => 'text', 'dependency' => ['provider_config_type', '==', 'r2']],
+            ['id' => 'r2_access_key_input', 'title' => 'Access Key ID', 'type' => 'text', 'attributes' => ['autocomplete' => 'off'], 'placeholder' => $hasR2AccessKey ? '已保存，留空不变' : '请输入 R2 Access Key ID', 'desc' => '不会回显已保存值；输入新值才会替换。', 'dependency' => ['provider_config_type', '==', 'r2']],
+            ['id' => 'r2_secret_key_input', 'title' => 'Secret Access Key', 'type' => 'text', 'attributes' => ['type' => 'password', 'autocomplete' => 'new-password'], 'placeholder' => $hasR2Secret ? '已保存，留空不变' : '请输入 R2 Secret Access Key', 'desc' => '留空保存表示保留原值。', 'dependency' => ['provider_config_type', '==', 'r2']],
+            ['id' => 'r2_presign_ttl', 'title' => '临时签名有效期', 'type' => 'number', 'default' => 900, 'unit' => '秒', 'attributes' => ['min' => 60, 'max' => 604800, 'step' => 60], 'desc' => '固定媒体 URL 每次访问时签发临时 R2 地址；建议 300–900 秒，最长 7 天。', 'dependency' => ['provider_config_type', '==', 'r2']],
+            ['id' => 'r2_custom_url', 'title' => '公开访问 URL（可选）', 'type' => 'text', 'attributes' => ['type' => 'url'], 'placeholder' => 'https://img.example.com', 'desc' => '私有桶请留空。仅当桶已公开并绑定自定义域名时填写，填写后将绕过预签名跳转直接访问。', 'dependency' => ['provider_config_type', '==', 'r2']],
             ['type' => 'subheading', 'content' => '<span class="wpstow-section-heading">连接 WebDAV</span><small>填写 WebDAV 服务地址和具有读写权限的账号。</small>', 'class' => 'wpstow-step-heading wpstow-provider-heading', 'dependency' => ['provider_config_type', '==', 'webdav']],
             ['id' => 'webdav_endpoint', 'title' => 'Endpoint', 'type' => 'text', 'attributes' => ['type' => 'url'], 'placeholder' => 'https://dav.example.com', 'dependency' => ['provider_config_type', '==', 'webdav']],
             ['id' => 'webdav_path', 'title' => '存储路径', 'type' => 'text', 'default' => '/', 'placeholder' => '/images', 'dependency' => ['provider_config_type', '==', 'webdav']],
@@ -484,6 +563,35 @@ function wpstow_register_csf_options()
             wpstow_csf_button_field('keep_local', '本地副本', ['yes' => '保留（推荐）', 'no' => '上传后删除'], 'yes', '保留副本便于故障回退、迁移和重新处理；关闭前请确认远端存储可靠。'),
             wpstow_csf_button_field('media_url_mode', '媒体访问地址', ['cloud' => '云端优先', 'local' => '本站优先'], 'cloud', '决定页面优先使用哪个地址，不会迁移或删除已有文件。', ['keep_local', '==', 'yes']),
             wpstow_csf_button_field('cloud_fallback_local', '云端读取失败时', ['yes' => '使用本地副本', 'no' => '不回退'], 'yes', '仅代理读取可自动判断故障；浏览器直连公开 CDN 时无法自动感知。', ['keep_local|media_url_mode', '==|==', 'yes|cloud']),
+        ],
+    ]);
+
+    CSF::createSection($key, [
+        'title' => '文件命名',
+        'icon' => 'fas fa-i-cursor',
+        'fields' => [
+            ['type' => 'subheading', 'content' => '<span class="wpstow-section-heading">新上传文件的名称</span><small>统一用于浏览器直传和服务器上传；已有媒体与云端对象不会被改名。</small>', 'class' => 'wpstow-step-heading'],
+            [
+                'id' => 'filename_preset',
+                'title' => '命名方案',
+                'type' => 'select',
+                'options' => FileNaming::getPresets(),
+                'default' => FileNaming::DEFAULT_PRESET,
+                'desc' => '默认“极短随机名”兼顾链接长度和防重名。所有方案都会自动保留原扩展名。',
+                'class' => 'wpstow-storage-picker',
+            ],
+            [
+                'id' => 'filename_template',
+                'title' => '自定义模板',
+                'type' => 'text',
+                'default' => FileNaming::DEFAULT_TEMPLATE,
+                'attributes' => ['maxlength' => 120, 'autocomplete' => 'off'],
+                'placeholder' => '{year}{month}{day}-{random:10}',
+                'desc' => '必须包含 <code>{random:N}</code>，固定文字仅允许字母、数字、点、短横线和下划线；不能填写目录或扩展名。',
+                'validate' => 'wpstow_csf_validate_filename_template',
+                'dependency' => ['filename_preset', '==', 'custom'],
+            ],
+            ['type' => 'callback', 'function' => 'wpstow_csf_render_filename_guide', 'class' => 'wpstow-naming-field'],
         ],
     ]);
 

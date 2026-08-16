@@ -122,4 +122,4 @@ We are provide [support forum](http://support.codestarthemes.com/) for premium v
 Check out the [release notes](http://codestarframework.com/documentation/#/relnotes)
 
 ## License
-Codestar Framework have two different version. Free version has limited features and offers only admin option panel feature. Premium version offers all extensions and more of settings for the best experience and advanced features. You can bundle the framework ( both free and premium ) in the premium theme/plugin and sell them on your own website or in marketplaces like ThemeForest. This framework is licensed 100% GPL.
+Codestar Framework have two different version. Free version has limited features and offers only admin option panel feature. Premium version offers all extensions and more of settings for the best experience and advanced features. You can bundle the framework ( both free and premium ) in your free theme/plugin that you publish inside WordPress.org theme/plugin directory or in premium theme/plugin that you sell on your own website or in marketplaces like ThemeForest. This framework is licensed 100% GPL.

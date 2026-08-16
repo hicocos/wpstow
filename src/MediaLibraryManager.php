@@ -21,7 +21,8 @@ class MediaLibraryManager
     private const STORAGE_LABELS = [
         'oneimg' => 'OneImg',
         'superbed' => '聚合图床',
-        's3' => 'S3 / R2',
+        's3' => 'S3',
+        'r2' => 'Cloudflare R2',
         'webdav' => 'WebDAV',
         'ftp' => 'FTP / FTPS',
         'local' => '仅本地',
@@ -30,9 +31,9 @@ class MediaLibraryManager
     public static function ajaxScan()
     {
         self::authorize();
-        $category = self::sanitizeCategory($_POST['category'] ?? 'all');
-        $cursor = max(0, (int) ($_POST['cursor'] ?? 0));
-        $maxId = max(0, (int) ($_POST['max_id'] ?? 0));
+        $category = self::sanitizeCategory(isset($_POST['category']) ? wp_unslash($_POST['category']) : 'all');
+        $cursor = isset($_POST['cursor']) ? max(0, (int) wp_unslash($_POST['cursor'])) : 0;
+        $maxId = isset($_POST['max_id']) ? max(0, (int) wp_unslash($_POST['max_id'])) : 0;
         wp_send_json_success(self::scanBatch($category, $cursor, $maxId));
     }
 

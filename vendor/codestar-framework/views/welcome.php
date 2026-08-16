@@ -16,9 +16,9 @@ if ( ! class_exists( 'CSF_Welcome' ) ) {
 
       if ( CSF::$premium && ( ! CSF::is_active_plugin( 'codestar-framework/codestar-framework.php' ) || apply_filters( 'csf_welcome_page', true ) === false ) ) { return; }
 
-      add_action( 'admin_menu', array( &$this, 'add_about_menu' ), 0 );
-      add_filter( 'plugin_action_links', array( &$this, 'add_plugin_action_links' ), 10, 5 );
-      add_filter( 'plugin_row_meta', array( &$this, 'add_plugin_row_meta' ), 10, 2 );
+      add_action( 'admin_menu', array( $this, 'add_about_menu' ), 0 );
+      add_filter( 'plugin_action_links', array( $this, 'add_plugin_action_links' ), 10, 5 );
+      add_filter( 'plugin_row_meta', array( $this, 'add_plugin_row_meta' ), 10, 2 );
 
       $this->set_demo_mode();
 
@@ -33,7 +33,7 @@ if ( ! class_exists( 'CSF_Welcome' ) ) {
     }
 
     public function add_about_menu() {
-      add_management_page( 'Codestar Framework', 'Codestar Framework', 'manage_options', 'csf-welcome', array( &$this, 'add_page_welcome' ) );
+      add_management_page( 'Codestar Framework', 'Codestar Framework', 'manage_options', 'csf-welcome', array( $this, 'add_page_welcome' ) );
     }
 
     public function add_page_welcome() {

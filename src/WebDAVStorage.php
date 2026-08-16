@@ -31,14 +31,16 @@ class WebDAVStorage extends StorageInterface
         }
 
         $mimetype = self::getMimeType($filepath);
-        $filedata = file_get_contents($filepath);
-        if ($filedata === false) {
+        $filesize = filesize($filepath);
+        $stream = @fopen($filepath, 'rb');
+        if ($filesize === false || !$stream) {
             return ['status' => false, 'message' => '无法读取待上传文件'];
         }
 
         $remotePath = rtrim($config['path'], '/') . '/' . $cloudKey;
         $directoryResult = self::ensureDirectory($config, dirname($remotePath));
         if (empty($directoryResult['status'])) {
+            fclose($stream);
             return $directoryResult;
         }
         $url = self::buildRemoteUrl($config['endpoint'], $remotePath);
@@ -46,15 +48,18 @@ class WebDAVStorage extends StorageInterface
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_PUT, true);
-        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'PUT');
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $filedata);
+        curl_setopt($ch, CURLOPT_UPLOAD, true);
+        curl_setopt($ch, CURLOPT_INFILE, $stream);
+        curl_setopt($ch, CURLOPT_INFILESIZE, $filesize);
         curl_setopt($ch, CURLOPT_USERPWD, $config['username'] . ':' . $config['password']);
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             'Content-Type: ' . $mimetype,
-            'Content-Length: ' . strlen($filedata)
+            'Content-Length: ' . $filesize
         ]);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 15);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 0);
+        curl_setopt($ch, CURLOPT_LOW_SPEED_LIMIT, 1);
+        curl_setopt($ch, CURLOPT_LOW_SPEED_TIME, 120);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
         curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
 
@@ -62,6 +67,7 @@ class WebDAVStorage extends StorageInterface
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $error = curl_error($ch);
         curl_close($ch);
+        fclose($stream);
 
         if ($httpCode >= 200 && $httpCode < 300) {
             $publicUrl = self::getPublicUrl($config, $cloudKey);
@@ -104,7 +110,7 @@ class WebDAVStorage extends StorageInterface
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
 
-        return $httpCode >= 200 && $httpCode < 300;
+        return ($httpCode >= 200 && $httpCode < 300) || $httpCode === 404;
     }
 
     public static function testConnection()
@@ -152,19 +158,42 @@ class WebDAVStorage extends StorageInterface
         $remotePath = rtrim($config['path'], '/') . '/' . $key;
         $url = self::buildRemoteUrl($config['endpoint'], $remotePath);
 
+        $requestMethod = isset($_SERVER['REQUEST_METHOD'])
+            ? sanitize_key(wp_unslash($_SERVER['REQUEST_METHOD']))
+            : 'GET';
+        $method = strtoupper($requestMethod) === 'HEAD' ? 'HEAD' : 'GET';
         $headers = [];
-        if (isset($_SERVER['HTTP_RANGE'])) {
-            $headers[] = 'Range: ' . $_SERVER['HTTP_RANGE'];
+        $range = isset($_SERVER['HTTP_RANGE'])
+            ? trim(sanitize_text_field(wp_unslash($_SERVER['HTTP_RANGE'])))
+            : '';
+        if ($method === 'GET' && preg_match('/^bytes=(?:\d+-\d*|-\d+)$/', $range)) {
+            $headers[] = 'Range: ' . $range;
+        }
+
+        $tempFile = $method === 'GET'
+            ? (function_exists('wp_tempnam') ? wp_tempnam(basename($key)) : tempnam(sys_get_temp_dir(), 'wpstow_'))
+            : '';
+        $stream = $method === 'GET' && $tempFile ? @fopen($tempFile, 'wb') : null;
+        if ($method === 'GET' && (!$tempFile || !$stream)) {
+            if ($tempFile) {
+                @unlink($tempFile);
+            }
+            return ['status' => false, 'http_code' => 0, 'message' => '无法创建 WebDAV 下载临时文件'];
         }
 
         $responseHeaders = [];
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, $method === 'HEAD');
         curl_setopt($ch, CURLOPT_USERPWD, $config['username'] . ':' . $config['password']);
         curl_setopt($ch, CURLOPT_TIMEOUT, 120);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
         curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
+        if ($method === 'HEAD') {
+            curl_setopt($ch, CURLOPT_NOBODY, true);
+        } else {
+            curl_setopt($ch, CURLOPT_FILE, $stream);
+        }
         if (!empty($headers)) {
             curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
         }
@@ -181,18 +210,26 @@ class WebDAVStorage extends StorageInterface
             return $len;
         });
 
-        $data = curl_exec($ch);
+        $result = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $error = curl_error($ch);
         curl_close($ch);
+        if ($stream) {
+            fclose($stream);
+        }
 
-        if ($httpCode >= 200 && $httpCode < 300) {
+        if ($result !== false && $httpCode >= 200 && $httpCode < 300) {
             return [
                 'status' => true,
-                'data' => $data,
+                'data' => '',
+                'temp_file' => $method === 'GET' ? $tempFile : '',
                 'http_code' => $httpCode,
                 'headers' => $responseHeaders
             ];
+        }
+
+        if ($tempFile) {
+            @unlink($tempFile);
         }
 
         return [
@@ -214,16 +251,22 @@ class WebDAVStorage extends StorageInterface
 
     private static function buildRemoteUrl($endpoint, $path)
     {
-        $segments = array_filter(explode('/', trim((string) $path, '/')), 'strlen');
+        $segments = array_filter(explode('/', trim((string) $path, '/')), static function ($segment) {
+            return $segment !== '';
+        });
         $encodedPath = implode('/', array_map(static function ($segment) {
-            return rawurlencode(rawurldecode($segment));
+            // Keys are stored decoded. Decoding again could turn a literal
+            // "%2e%2e" segment into traversal syntax on some WebDAV servers.
+            return rawurlencode($segment);
         }, $segments));
         return rtrim((string) $endpoint, '/') . ($encodedPath === '' ? '/' : '/' . $encodedPath);
     }
 
     private static function ensureDirectory($config, $directory)
     {
-        $segments = array_values(array_filter(explode('/', trim((string) $directory, '/')), 'strlen'));
+        $segments = array_values(array_filter(explode('/', trim((string) $directory, '/')), static function ($segment) {
+            return $segment !== '';
+        }));
         $current = '';
         foreach ($segments as $segment) {
             $current .= '/' . $segment;

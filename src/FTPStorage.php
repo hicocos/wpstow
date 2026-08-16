@@ -78,7 +78,14 @@ class FTPStorage extends StorageInterface
         }
 
         $remotePath = rtrim($config['path'], '/') . '/' . $key;
-        $result = ftp_delete($conn, $remotePath);
+        $result = @ftp_delete($conn, $remotePath);
+        if (!$result) {
+            $listing = @ftp_nlist($conn, dirname($remotePath));
+            if (is_array($listing)) {
+                $names = array_map('basename', $listing);
+                $result = !in_array(basename($remotePath), $names, true);
+            }
+        }
         ftp_close($conn);
 
         return $result;
@@ -124,7 +131,33 @@ class FTPStorage extends StorageInterface
 
         $remotePath = rtrim($config['path'], '/') . '/' . $key;
 
+        $requestMethod = isset($_SERVER['REQUEST_METHOD'])
+            ? sanitize_key(wp_unslash($_SERVER['REQUEST_METHOD']))
+            : 'GET';
+        if (strtoupper($requestMethod) === 'HEAD') {
+            $size = @ftp_size($conn, $remotePath);
+            ftp_close($conn);
+            if ($size < 0) {
+                return ['status' => false, 'http_code' => 404, 'message' => 'FTP 文件不存在或无法读取大小'];
+            }
+            return [
+                'status' => true,
+                'data' => '',
+                'temp_file' => '',
+                'http_code' => 200,
+                'headers' => [
+                    'content-type' => self::getMimeTypeFromExtension($key),
+                    'content-length' => (string) $size,
+                    'accept-ranges' => 'none',
+                ],
+            ];
+        }
+
         $tempFile = tempnam(sys_get_temp_dir(), 'wpstow_');
+        if (!$tempFile) {
+            ftp_close($conn);
+            return ['status' => false, 'http_code' => 0, 'message' => '无法创建 FTP 下载临时文件'];
+        }
         if (!@ftp_get($conn, $tempFile, $remotePath, FTP_BINARY)) {
             ftp_close($conn);
             @unlink($tempFile);
@@ -133,18 +166,16 @@ class FTPStorage extends StorageInterface
 
         ftp_close($conn);
 
-        $data = file_get_contents($tempFile);
-        @unlink($tempFile);
-
         $mimeType = self::getMimeTypeFromExtension($key);
 
         return [
             'status' => true,
-            'data' => $data,
+            'data' => '',
+            'temp_file' => $tempFile,
             'http_code' => 200,
             'headers' => [
                 'content-type' => $mimeType,
-                'content-length' => strlen($data),
+                'content-length' => (string) filesize($tempFile),
                 'accept-ranges' => 'none'
             ]
         ];
@@ -165,7 +196,13 @@ class FTPStorage extends StorageInterface
 
     private static function connect($config)
     {
+        if (!function_exists('ftp_connect')) {
+            return false;
+        }
         if ($config['ssl']) {
+            if (!function_exists('ftp_ssl_connect')) {
+                return false;
+            }
             $conn = @ftp_ssl_connect($config['host'], $config['port'], 10);
         } else {
             $conn = @ftp_connect($config['host'], $config['port'], 10);
@@ -198,7 +235,8 @@ class FTPStorage extends StorageInterface
                 continue;
             }
             if (!@ftp_chdir($conn, $part)) {
-                if (!@ftp_mkdir($conn, $part) || !@ftp_chdir($conn, $part)) {
+                $created = @ftp_mkdir($conn, $part);
+                if ($created === false || !@ftp_chdir($conn, $part)) {
                     @ftp_chdir($conn, '/');
                     return false;
                 }
@@ -210,11 +248,17 @@ class FTPStorage extends StorageInterface
 
     private static function getPublicUrl($config, $key)
     {
+        $segments = array_filter(explode('/', ltrim(str_replace('\\', '/', (string) $key), '/')), static function ($segment) {
+            return $segment !== '';
+        });
+        $encodedKey = implode('/', array_map('rawurlencode', $segments));
         if (!empty($config['custom_url'])) {
-            return rtrim($config['custom_url'], '/') . '/' . $key;
+            return rtrim($config['custom_url'], '/') . '/' . $encodedKey;
         }
 
         $protocol = $config['ssl'] ? 'ftps' : 'ftp';
-        return $protocol . '://' . $config['host'] . rtrim($config['path'], '/') . '/' . $key;
+        $port = (int) $config['port'];
+        $portSuffix = $port > 0 && $port !== 21 ? ':' . $port : '';
+        return $protocol . '://' . $config['host'] . $portSuffix . rtrim($config['path'], '/') . '/' . $encodedKey;
     }
 }

@@ -3,8 +3,8 @@
 /**
  * Plugin Name: WPStow
  * Plugin URI: https://github.com/hicocos/wpstow
- * Description: 将 WordPress 媒体上传至云端存储（支持聚合图床/OneImg/S3/WebDAV/FTP）
- * Version: 1.9.0
+ * Description: 将 WordPress 媒体上传至云端存储（支持聚合图床/OneImg/S3/R2/WebDAV/FTP）
+ * Version: 2.0.0
  * Author: MoePick
  * Author URI: https://moepick.com/
  * Requires PHP: 7.4
@@ -15,7 +15,7 @@
 
 if (!defined('ABSPATH')) exit;
 
-define('WPSTOW_VERSION', '1.9.0');
+define('WPSTOW_VERSION', '2.0.0');
 define('WPSTOW_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('WPSTOW_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -100,6 +100,92 @@ function wpstow_migrate_legacy_data() {
 
 wpstow_migrate_legacy_data();
 
+/**
+ * Split legacy Cloudflare R2 settings and attachment ownership from generic S3.
+ */
+function wpstow_migrate_r2_storage() {
+    if (get_option('wpstow_r2_migration_version') === '2') {
+        return;
+    }
+
+    $setting = get_option('wpstow_setting');
+    if ($setting && !is_array($setting)) {
+        $setting = @unserialize($setting, ['allowed_classes' => false]);
+    }
+    $setting = is_array($setting) ? $setting : [];
+    $endpoint_host = strtolower((string) parse_url((string) ($setting['s3_endpoint'] ?? ''), PHP_URL_HOST));
+    $r2_suffix = '.r2.cloudflarestorage.com';
+    $is_legacy_r2 = $endpoint_host !== ''
+        && strlen($endpoint_host) > strlen($r2_suffix)
+        && substr($endpoint_host, -strlen($r2_suffix)) === $r2_suffix;
+    $legacy_endpoint = rtrim((string) ($setting['s3_endpoint'] ?? ''), '/');
+    $existing_r2_endpoint = rtrim((string) ($setting['r2_endpoint'] ?? ''), '/');
+    $has_conflicting_r2 = $existing_r2_endpoint !== '' && $existing_r2_endpoint !== $legacy_endpoint;
+
+    if ($is_legacy_r2 && !$has_conflicting_r2) {
+        foreach (['endpoint', 'access_key', 'secret_key', 'bucket', 'custom_url'] as $field) {
+            if (empty($setting['r2_' . $field])) {
+                $setting['r2_' . $field] = $setting['s3_' . $field] ?? '';
+            }
+        }
+        if (empty($setting['r2_presign_ttl'])) {
+            $setting['r2_presign_ttl'] = 900;
+        }
+        foreach (['storage_type', 'provider_config_type', 'image_storage_type', 'video_storage_type', 'audio_storage_type', 'other_storage_type'] as $route_key) {
+            if (($setting[$route_key] ?? '') === 's3') {
+                $setting[$route_key] = 'r2';
+            }
+        }
+        update_option('wpstow_setting', $setting, false);
+
+        global $wpdb;
+        foreach (['_wpstow_storage_type', '_wpstow_pending_storage'] as $meta_key) {
+            $affected_ids = $wpdb->get_col($wpdb->prepare(
+                "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = %s AND meta_value = %s",
+                $meta_key,
+                's3'
+            ));
+            $wpdb->update(
+                $wpdb->postmeta,
+                ['meta_value' => 'r2'],
+                ['meta_key' => $meta_key, 'meta_value' => 's3'],
+                ['%s'],
+                ['%s', '%s']
+            );
+            foreach ($affected_ids as $post_id) {
+                wp_cache_delete((int) $post_id, 'post_meta');
+            }
+        }
+
+        $manifest_ids = $wpdb->get_col($wpdb->prepare(
+            "SELECT DISTINCT post_id FROM {$wpdb->postmeta} WHERE meta_key = %s AND meta_value LIKE %s",
+            '_wpstow_storage_manifest',
+            '%' . $wpdb->esc_like('s:12:"storage_type";s:2:"s3";') . '%'
+        ));
+        foreach ($manifest_ids as $post_id) {
+            $manifest = get_post_meta((int) $post_id, '_wpstow_storage_manifest', true);
+            if (is_array($manifest) && ($manifest['storage_type'] ?? '') === 's3') {
+                $manifest['storage_type'] = 'r2';
+                $manifest['storage_identity'] = [
+                    'endpoint' => $setting['r2_endpoint'],
+                    'bucket' => $setting['r2_bucket'],
+                ];
+                update_post_meta((int) $post_id, '_wpstow_storage_manifest', $manifest);
+            }
+        }
+
+        foreach (['endpoint', 'access_key', 'secret_key', 'bucket', 'custom_url'] as $field) {
+            $setting['s3_' . $field] = '';
+        }
+        $setting['s3_region'] = 'us-east-1';
+        $setting['s3_path_style'] = 'no';
+        update_option('wpstow_setting', $setting, false);
+    }
+
+    update_option('wpstow_r2_migration_version', '2', false);
+}
+wpstow_migrate_r2_storage();
+
 add_action('admin_init', 'wpstow_redirect_legacy_settings_page', 1);
 function wpstow_redirect_legacy_settings_page() {
     if (
@@ -115,12 +201,15 @@ function wpstow_redirect_legacy_settings_page() {
 register_activation_hook(__FILE__, 'wpstow_activate');
 function wpstow_activate() {
     wpstow_migrate_legacy_data();
+    wpstow_migrate_r2_storage();
     \WPStow\PersistentMediaQueue::install();
+    \WPStow\CloudDeletionQueue::install();
 
-    $log_dir = WPSTOW_PLUGIN_DIR . 'logs/';
+    $log_dir = \WPStow\Plugin::getLogDir();
     if (!is_dir($log_dir)) {
         wp_mkdir_p($log_dir);
-        file_put_contents($log_dir . '.htaccess', 'Deny from all');
+        file_put_contents($log_dir . '.htaccess', "Deny from all\n<IfModule mod_authz_core.c>\nRequire all denied\n</IfModule>\n");
+        file_put_contents($log_dir . 'index.html', '');
     }
 
     if (!wpstow_check_requirements()) {
@@ -137,6 +226,7 @@ register_deactivation_hook(__FILE__, 'wpstow_deactivate');
 function wpstow_deactivate() {
     MediaProxy::removeHtaccess();
     \WPStow\PersistentMediaQueue::deactivate();
+    \WPStow\CloudDeletionQueue::deactivate();
 }
 
 function wpstow_check_requirements() {
@@ -220,7 +310,7 @@ if (is_admin()) {
 }
 
 add_action('admin_enqueue_scripts', function ($hook) {
-    if (!in_array($hook, ['toplevel_page_wpstow_settings', 'upload.php'], true)) {
+    if (!in_array($hook, ['toplevel_page_wpstow_settings', 'upload.php', 'media-new.php', 'post.php', 'post-new.php'], true)) {
         return;
     }
 
@@ -252,6 +342,18 @@ add_action('admin_enqueue_scripts', function ($hook) {
             'failed' => __('处理失败，请重试', 'wpstow'),
         ]);
     }
+
+    wp_enqueue_media();
+    $direct_upload_js = WPSTOW_PLUGIN_DIR . 'static/direct-upload.js';
+    $direct_upload_version = file_exists($direct_upload_js) ? WPSTOW_VERSION . '-' . filemtime($direct_upload_js) : WPSTOW_VERSION;
+    wp_enqueue_script(
+        'wpstow-direct-upload',
+        WPSTOW_PLUGIN_URL . 'static/direct-upload.js',
+        ['jquery', 'wp-plupload', 'media-models'],
+        $direct_upload_version,
+        true
+    );
+    wp_localize_script('wpstow-direct-upload', 'wpstowDirectUpload', \WPStow\DirectUpload::getClientConfig());
 }, 20);
 
 require 'src/admin-csf.php';
@@ -260,13 +362,6 @@ require 'src/hooks.php';
 if (is_admin()) {
     new Update(__FILE__);
 }
-
-add_action('init', function() {
-    if (MediaHandler::config('switch') == 'enable') {
-        add_filter('wp_calculate_image_srcset', [MediaHandler::class, 'filterImageSrcset'], 10, 5);
-        add_filter('wp_get_attachment_link', [MediaHandler::class, 'filterAttachmentLink'], 10, 6);
-    }
-}, 100);
 
 add_action('wp_ajax_wpstow_debug_upload', 'wpstow_debug_upload');
 function wpstow_debug_upload() {
@@ -299,18 +394,18 @@ function wpstow_debug_upload() {
     try {
         $result = $storageClass::upload($test_file, $cloudKey);
         if (!empty($result['status'])) {
-            $deleted = (bool) $storageClass::delete($cloudKey);
+            $deleted = \WPStow\CloudDeletionQueue::deleteObject($debugStorageType, $cloudKey, '后台上传自检清理');
             if ($deleted) {
                 $response = ['success' => true, 'data' => ['message' => '上传和临时对象清理均正常', 'key' => $cloudKey]];
             } else {
-                $response = ['success' => false, 'data' => ['message' => '上传成功，但临时对象删除失败，请检查云端权限', 'key' => $cloudKey]];
+                $response = ['success' => false, 'data' => ['message' => '上传成功，但临时对象立即删除失败，已加入后台自动重试', 'key' => $cloudKey]];
             }
         } else {
             $response = ['success' => false, 'data' => ['message' => $result['message'] ?? '上传自检失败']];
         }
     } catch (\Throwable $e) {
         try {
-            $storageClass::delete($cloudKey);
+            \WPStow\CloudDeletionQueue::deleteObject($debugStorageType, $cloudKey, '后台上传自检异常清理');
         } catch (\Throwable $cleanupError) {
             // Preserve the original self-check error; the random key is returned for manual cleanup if needed.
         }

@@ -108,8 +108,8 @@ class PersistentMediaQueue
     public static function ajaxStart()
     {
         self::authorize();
-        $category = MediaLibraryManager::sanitizeCategory($_POST['category'] ?? 'all');
-        $requestedMaxId = max(0, (int) ($_POST['max_id'] ?? 0));
+        $category = MediaLibraryManager::sanitizeCategory(isset($_POST['category']) ? wp_unslash($_POST['category']) : 'all');
+        $requestedMaxId = isset($_POST['max_id']) ? max(0, (int) wp_unslash($_POST['max_id'])) : 0;
         $maxId = MediaLibraryManager::getMaxId($category);
         if ($requestedMaxId > 0) {
             $maxId = min($requestedMaxId, $maxId);
@@ -131,7 +131,7 @@ class PersistentMediaQueue
     public static function ajaxStatus()
     {
         self::authorize();
-        $jobId = max(0, (int) ($_POST['job_id'] ?? 0));
+        $jobId = isset($_POST['job_id']) ? max(0, (int) wp_unslash($_POST['job_id'])) : 0;
         $job = $jobId ? self::getJob($jobId) : self::getLatestJob();
         if ($job && in_array($job['status'], ['pending', 'running'], true)) {
             self::scheduleJob((int) $job['id'], 1);
@@ -142,7 +142,7 @@ class PersistentMediaQueue
     public static function ajaxControl()
     {
         self::authorize();
-        $jobId = max(0, (int) ($_POST['job_id'] ?? 0));
+        $jobId = isset($_POST['job_id']) ? max(0, (int) wp_unslash($_POST['job_id'])) : 0;
         $command = sanitize_key(wp_unslash((string) ($_POST['command'] ?? '')));
         if (!$jobId || !in_array($command, ['pause', 'resume', 'cancel'], true)) {
             wp_send_json_error(['message' => '队列操作参数无效'], 400);

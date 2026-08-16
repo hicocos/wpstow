@@ -52,13 +52,14 @@ if ( ! class_exists( 'CSF_Options' ) ) {
       'sticky_header'           => true,
       'save_defaults'           => true,
       'ajax_save'               => true,
+      'form_action'             => '',
 
       // admin bar menu settings
       'admin_bar_menu_icon'     => '',
       'admin_bar_menu_priority' => 50,
 
       // footer
-      'footer_text'             => '',
+      'footer_text'             => 'Thank you for creating with Codestar Framework',
       'footer_after'            => '',
       'footer_credit'           => '',
 
@@ -78,6 +79,7 @@ if ( ! class_exists( 'CSF_Options' ) ) {
       'output_css'              => true,
 
       // theme
+      'nav'                     => 'normal',
       'theme'                   => 'dark',
       'class'                   => '',
 
@@ -102,12 +104,12 @@ if ( ! class_exists( 'CSF_Options' ) ) {
       $this->set_options();
       $this->save_defaults();
 
-      add_action( 'admin_menu', array( &$this, 'add_admin_menu' ) );
-      add_action( 'admin_bar_menu', array( &$this, 'add_admin_bar_menu' ), $this->args['admin_bar_menu_priority'] );
-      add_action( 'wp_ajax_csf_'. $this->unique .'_ajax_save', array( &$this, 'ajax_save' ) );
+      add_action( 'admin_menu', array( $this, 'add_admin_menu' ) );
+      add_action( 'admin_bar_menu', array( $this, 'add_admin_bar_menu' ), $this->args['admin_bar_menu_priority'] );
+      add_action( 'wp_ajax_csf_'. $this->unique .'_ajax_save', array( $this, 'ajax_save' ) );
 
       if ( $this->args['database'] === 'network' && ! empty( $this->args['show_in_network'] ) ) {
-        add_action( 'network_admin_menu', array( &$this, 'add_admin_menu' ) );
+        add_action( 'network_admin_menu', array( $this, 'add_admin_menu' ) );
       }
 
       // wp enqeueu for typography and output css
@@ -120,71 +122,14 @@ if ( ! class_exists( 'CSF_Options' ) ) {
       return new self( $key, $params );
     }
 
-    public function pre_tabs( $sections ) {
-
-      $result  = array();
-      $parents = array();
-      $count   = 100;
-
-      foreach ( $sections as $key => $section ) {
-        if ( ! empty( $section['parent'] ) ) {
-          $section['priority'] = ( isset( $section['priority'] ) ) ? $section['priority'] : $count;
-          $parents[$section['parent']][] = $section;
-          unset( $sections[$key] );
-        }
-        $count++;
-      }
-
-      foreach ( $sections as $key => $section ) {
-        $section['priority'] = ( isset( $section['priority'] ) ) ? $section['priority'] : $count;
-        if ( ! empty( $section['id'] ) && ! empty( $parents[$section['id']] ) ) {
-          $section['subs'] = wp_list_sort( $parents[$section['id']], array( 'priority' => 'ASC' ), 'ASC', true );
-        }
-        $result[] = $section;
-        $count++;
-      }
-
-      return wp_list_sort( $result, array( 'priority' => 'ASC' ), 'ASC', true );
-    }
-
-    public function pre_fields( $sections ) {
-
-      $result  = array();
-
-      foreach ( $sections as $key => $section ) {
-        if ( ! empty( $section['fields'] ) ) {
-          foreach ( $section['fields'] as $field ) {
-            $result[] = $field;
-          }
-        }
-      }
-
-      return $result;
-    }
-
-    public function pre_sections( $sections ) {
-
-      $result = array();
-
-      foreach ( $this->pre_tabs as $tab ) {
-        if ( ! empty( $tab['subs'] ) ) {
-          foreach ( $tab['subs'] as $sub ) {
-            $sub['ptitle'] = $tab['title'];
-            $result[] = $sub;
-          }
-        }
-        if ( empty( $tab['subs'] ) ) {
-          $result[] = $tab;
-        }
-      }
-
-      return $result;
-    }
-
     // add admin bar menu
     public function add_admin_bar_menu( $wp_admin_bar ) {
 
-      if( is_network_admin() && ( $this->args['database'] !== 'network' || $this->args['show_in_network'] !== true ) ) {
+      if ( ! current_user_can( $this->args['menu_capability'] ) ) {
+        return;
+      }
+
+      if ( is_network_admin() && ( $this->args['database'] !== 'network' || $this->args['show_in_network'] !== true ) ) {
         return;
       }
 
@@ -436,14 +381,14 @@ if ( ! class_exists( 'CSF_Options' ) ) {
 
       if ( $menu_type === 'submenu' ) {
 
-        $menu_page = call_user_func( 'add_submenu_page', $menu_parent, esc_attr( $menu_title ), esc_attr( $menu_title ), $menu_capability, $menu_slug, array( &$this, 'add_options_html' ) );
+        $menu_page = call_user_func( 'add_submenu_page', $menu_parent, esc_attr( $menu_title ), esc_attr( $menu_title ), $menu_capability, $menu_slug, array( $this, 'add_options_html' ) );
 
       } else {
 
-        $menu_page = call_user_func( 'add_menu_page', esc_attr( $menu_title ), esc_attr( $menu_title ), $menu_capability, $menu_slug, array( &$this, 'add_options_html' ), $menu_icon, $menu_position );
+        $menu_page = call_user_func( 'add_menu_page', esc_attr( $menu_title ), esc_attr( $menu_title ), $menu_capability, $menu_slug, array( $this, 'add_options_html' ), $menu_icon, $menu_position );
 
         if ( ! empty( $sub_menu_title ) ) {
-          call_user_func( 'add_submenu_page', $menu_slug, esc_attr( $sub_menu_title ), esc_attr( $sub_menu_title ), $menu_capability, $menu_slug, array( &$this, 'add_options_html' ) );
+          call_user_func( 'add_submenu_page', $menu_slug, esc_attr( $sub_menu_title ), esc_attr( $sub_menu_title ), $menu_capability, $menu_slug, array( $this, 'add_options_html' ) );
         }
 
         if ( ! empty( $this->args['show_sub_menu'] ) && count( $this->pre_tabs ) > 1 ) {
@@ -463,7 +408,7 @@ if ( ! class_exists( 'CSF_Options' ) ) {
 
       }
 
-      add_action( 'load-'. $menu_page, array( &$this, 'add_page_on_load' ) );
+      add_action( 'load-'. $menu_page, array( $this, 'add_page_on_load' ) );
 
     }
 
@@ -483,13 +428,14 @@ if ( ! class_exists( 'CSF_Options' ) ) {
 
       }
 
-      add_filter( 'admin_footer_text', array( &$this, 'add_admin_footer_text' ) );
+      if ( ! empty( $this->args['footer_credit'] ) ) {
+        add_filter( 'admin_footer_text', array( $this, 'add_admin_footer_text' ) );
+      }
 
     }
 
     public function add_admin_footer_text() {
-      $default = 'Thank you for creating with <a href="http://codestarframework.com/" target="_blank">Codestar Framework</a>';
-      echo ( ! empty( $this->args['footer_credit'] ) ) ? $this->args['footer_credit'] : $default;
+      echo wp_kses_post( $this->args['footer_credit'] );
     }
 
     public function error_check( $sections, $err = '' ) {
@@ -531,6 +477,8 @@ if ( ! class_exists( 'CSF_Options' ) ) {
       $wrapper_class = ( $this->args['framework_class'] ) ? ' '. $this->args['framework_class'] : '';
       $theme         = ( $this->args['theme'] ) ? ' csf-theme-'. $this->args['theme'] : '';
       $class         = ( $this->args['class'] ) ? ' '. $this->args['class'] : '';
+      $nav_type      = ( $this->args['nav'] === 'inline' ) ? 'inline' : 'normal';
+      $form_action   = ( $this->args['form_action'] ) ? $this->args['form_action'] : '';
 
       do_action( 'csf_options_before' );
 
@@ -538,7 +486,7 @@ if ( ! class_exists( 'CSF_Options' ) ) {
 
         echo '<div class="csf-container">';
 
-        echo '<form method="post" action="" enctype="multipart/form-data" id="csf-form" autocomplete="off" novalidate="novalidate">';
+        echo '<form method="post" action="'. esc_attr( $form_action ) .'" enctype="multipart/form-data" id="csf-form" autocomplete="off" novalidate="novalidate">';
 
         echo '<input type="hidden" class="csf-section-id" name="csf_transient[section]" value="1">';
 
@@ -580,7 +528,7 @@ if ( ! class_exists( 'CSF_Options' ) ) {
 
           if ( $has_nav ) {
 
-            echo '<div class="csf-nav csf-nav-options">';
+            echo '<div class="csf-nav csf-nav-'. esc_attr( $nav_type ) .' csf-nav-options">';
 
               echo '<ul>';
 
@@ -679,7 +627,7 @@ if ( ! class_exists( 'CSF_Options' ) ) {
 
           echo '</div>';
 
-          echo '<div class="csf-nav-background"></div>';
+          echo ( $has_nav && $nav_type === 'normal' ) ? '<div class="csf-nav-background"></div>' : '';
 
         echo '</div>';
 

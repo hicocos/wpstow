@@ -135,8 +135,8 @@ class ImageProcessor
                 $image = @imagecreatefrompng($filepath);
                 break;
             case IMAGETYPE_GIF:
-                $image = @imagecreatefromgif($filepath);
-                break;
+                // GD 会丢弃 GIF 动画帧，保持原文件不变。
+                return $filepath;
             case IMAGETYPE_WEBP:
                 if (function_exists('imagecreatefromwebp')) {
                     $image = @imagecreatefromwebp($filepath);
@@ -165,34 +165,40 @@ class ImageProcessor
         imagecopy($newImage, $image, 0, 0, 0, 0, $width, $height);
         imagedestroy($image);
 
-        // 保存压缩后的图片
+        // 先写入同目录临时文件，编码完整成功后再替换原图。
+        $tempFile = tempnam(dirname($filepath), '.wpstow-image-');
+        if ($tempFile === false) {
+            imagedestroy($newImage);
+            return $filepath;
+        }
         $result = false;
         switch ($type) {
             case IMAGETYPE_JPEG:
-                $result = imagejpeg($newImage, $filepath, $quality);
+                $result = imagejpeg($newImage, $tempFile, $quality);
                 break;
             case IMAGETYPE_PNG:
                 // PNG 质量范围是 0-9，9 是最小压缩
-                $pngQuality = round((100 - $quality) / 100 * 9);
-                $result = imagepng($newImage, $filepath, $pngQuality);
+                $pngQuality = (int) round((100 - $quality) / 100 * 9);
+                $result = imagepng($newImage, $tempFile, $pngQuality);
                 break;
             case IMAGETYPE_GIF:
-                $result = imagegif($newImage, $filepath);
+                $result = imagegif($newImage, $tempFile);
                 break;
             case IMAGETYPE_WEBP:
                 if (function_exists('imagewebp')) {
-                    $result = imagewebp($newImage, $filepath, $quality);
+                    $result = imagewebp($newImage, $tempFile, $quality);
                 }
                 break;
         }
 
         imagedestroy($newImage);
 
-        if ($result) {
+        if ($result && self::replaceFile($tempFile, $filepath)) {
             Utils::writeLog("ImageProcessor: 压缩成功，质量={$quality}");
             return $filepath;
         }
 
+        @unlink($tempFile);
         return $filepath;
     }
 
@@ -229,8 +235,8 @@ class ImageProcessor
                 $image = @imagecreatefrompng($filepath);
                 break;
             case IMAGETYPE_GIF:
-                $image = @imagecreatefromgif($filepath);
-                break;
+                // GD 会丢弃 GIF 动画帧，保持原文件不变。
+                return $filepath;
             case IMAGETYPE_WEBP:
                 if (function_exists('imagecreatefromwebp')) {
                     $image = @imagecreatefromwebp($filepath);
@@ -281,7 +287,7 @@ class ImageProcessor
             $coords = self::calculatePosition($position, $width, $height, $textWidth, $textHeight, $margin);
 
             // 设置水印颜色
-            $color = imagecolorallocatealpha($image, 255, 255, 255, round((100 - $opacity) * 1.27));
+            $color = imagecolorallocatealpha($image, 255, 255, 255, (int) round((100 - $opacity) * 1.27));
 
             // 添加文字水印
             if (is_numeric($fontPath)) {
@@ -317,6 +323,7 @@ class ImageProcessor
             $wmType = $watermarkInfo[2];
 
             // 创建水印图像资源
+            $watermark = false;
             switch ($wmType) {
                 case IMAGETYPE_JPEG:
                     $watermark = @imagecreatefromjpeg($watermarkPath);
@@ -347,9 +354,14 @@ class ImageProcessor
             $maxWmHeight = $height / 4;
             if ($wmWidth > $maxWmWidth || $wmHeight > $maxWmHeight) {
                 $scale = min($maxWmWidth / $wmWidth, $maxWmHeight / $wmHeight);
-                $newWmWidth = round($wmWidth * $scale);
-                $newWmHeight = round($wmHeight * $scale);
+                $newWmWidth = max(1, (int) round($wmWidth * $scale));
+                $newWmHeight = max(1, (int) round($wmHeight * $scale));
                 $resizedWatermark = imagecreatetruecolor($newWmWidth, $newWmHeight);
+                if (!$resizedWatermark) {
+                    imagedestroy($watermark);
+                    imagedestroy($image);
+                    return $filepath;
+                }
                 imagealphablending($resizedWatermark, false);
                 imagesavealpha($resizedWatermark, true);
                 imagecopyresampled($resizedWatermark, $watermark, 0, 0, 0, 0, $newWmWidth, $newWmHeight, $wmWidth, $wmHeight);
@@ -368,33 +380,61 @@ class ImageProcessor
             imagedestroy($watermark);
         }
 
-        // 保存图片
+        // 先写入同目录临时文件，避免编码失败破坏原图。
+        $tempFile = tempnam(dirname($filepath), '.wpstow-image-');
+        if ($tempFile === false) {
+            imagedestroy($image);
+            return $filepath;
+        }
         $result = false;
         switch ($type) {
             case IMAGETYPE_JPEG:
-                $result = imagejpeg($image, $filepath, 90);
+                $result = imagejpeg($image, $tempFile, 90);
                 break;
             case IMAGETYPE_PNG:
-                $result = imagepng($image, $filepath, 8);
+                $result = imagepng($image, $tempFile, 8);
                 break;
             case IMAGETYPE_GIF:
-                $result = imagegif($image, $filepath);
+                $result = imagegif($image, $tempFile);
                 break;
             case IMAGETYPE_WEBP:
                 if (function_exists('imagewebp')) {
-                    $result = imagewebp($image, $filepath, 90);
+                    $result = imagewebp($image, $tempFile, 90);
                 }
                 break;
         }
 
         imagedestroy($image);
 
-        if ($result) {
+        if ($result && self::replaceFile($tempFile, $filepath)) {
             Utils::writeLog("ImageProcessor: 水印添加成功，位置={$position}，透明度={$opacity}");
             return $filepath;
         }
 
+        @unlink($tempFile);
         return $filepath;
+    }
+
+    private static function replaceFile($source, $target)
+    {
+        $permissions = @fileperms($target);
+        if (!is_file($target)) {
+            return @rename($source, $target);
+        }
+
+        $backup = $target . '.wpstow-backup-' . str_replace('.', '', uniqid('', true));
+        if (!@rename($target, $backup)) {
+            return false;
+        }
+        if (!@rename($source, $target)) {
+            @rename($backup, $target);
+            return false;
+        }
+        @unlink($backup);
+        if ($permissions !== false) {
+            @chmod($target, $permissions & 0777);
+        }
+        return true;
     }
 
     /**

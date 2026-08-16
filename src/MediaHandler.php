@@ -5,6 +5,7 @@ namespace WPStow;
 use WPStow\Plugin;
 use WPStow\Utils;
 use WPStow\S3Storage;
+use WPStow\R2Storage;
 use WPStow\WebDAVStorage;
 use WPStow\FTPStorage;
 use WPStow\OneImgStorage;
@@ -16,6 +17,7 @@ class MediaHandler extends Plugin
         'oneimg' => OneImgStorage::class,
         'superbed' => SuperbedStorage::class,
         's3' => S3Storage::class,
+        'r2' => R2Storage::class,
         'webdav' => WebDAVStorage::class,
         'ftp' => FTPStorage::class,
     ];
@@ -113,6 +115,18 @@ class MediaHandler extends Plugin
                 return $instance->s3_path_style;
             case 's3_custom_url':
                 return $instance->s3_custom_url;
+            case 'r2_endpoint':
+                return $instance->r2_endpoint;
+            case 'r2_access_key':
+                return $instance->r2_access_key;
+            case 'r2_secret_key':
+                return $instance->r2_secret_key;
+            case 'r2_bucket':
+                return $instance->r2_bucket;
+            case 'r2_custom_url':
+                return $instance->r2_custom_url;
+            case 'r2_presign_ttl':
+                return $instance->r2_presign_ttl;
             case 'webdav_endpoint':
                 return $instance->webdav_endpoint;
             case 'webdav_username':
@@ -168,6 +182,10 @@ class MediaHandler extends Plugin
                 return $instance->cloud_fallback_local;
             case 'media_url_mode':
                 return $instance->media_url_mode;
+            case 'filename_preset':
+                return $instance->filename_preset;
+            case 'filename_template':
+                return $instance->filename_template;
             // 视频处理
             case 'video_compress':
                 return $instance->video_compress;
@@ -198,8 +216,8 @@ class MediaHandler extends Plugin
         $category = in_array($category, self::MEDIA_CATEGORIES, true) ? $category : 'other';
         $storageType = (string) self::config($category . '_storage_type');
         $allowed = $category === 'image'
-            ? ['oneimg', 'superbed', 's3', 'webdav', 'ftp', 'local']
-            : ['s3', 'webdav', 'ftp', 'local'];
+            ? ['oneimg', 'superbed', 's3', 'r2', 'webdav', 'ftp', 'local']
+            : ['s3', 'r2', 'webdav', 'ftp', 'local'];
 
         if (in_array($storageType, $allowed, true)) {
             return $storageType;
@@ -254,6 +272,11 @@ class MediaHandler extends Plugin
                 && !empty(self::config('s3_access_key'))
                 && !empty(self::config('s3_secret_key'))
                 && !empty(self::config('s3_bucket'));
+        } elseif ($storageType === 'r2') {
+            return !empty(self::config('r2_endpoint'))
+                && !empty(self::config('r2_access_key'))
+                && !empty(self::config('r2_secret_key'))
+                && !empty(self::config('r2_bucket'));
         } elseif ($storageType === 'webdav') {
             return !empty(self::config('webdav_endpoint'))
                 && !empty(self::config('webdav_username'))
@@ -325,8 +348,8 @@ class MediaHandler extends Plugin
 
     private static function localObjectFileExists($cloudKey)
     {
-        $relativePath = ltrim(str_replace('\\', '/', (string) $cloudKey), '/');
-        if ($relativePath === '' || strpos($relativePath, '../') !== false || strpos($relativePath, "\0") !== false) {
+        $relativePath = StorageInterface::normalizeObjectKey($cloudKey);
+        if ($relativePath === false) {
             return false;
         }
 
@@ -335,7 +358,7 @@ class MediaHandler extends Plugin
             return false;
         }
 
-        return is_file(trailingslashit($uploadDir['basedir']) . $relativePath);
+        return self::isSafeUploadFile(trailingslashit($uploadDir['basedir']) . $relativePath);
     }
 
     private static function shouldRewriteCloudUrls($attachment_id, $cloudKey = '', $mainResource = false)
@@ -455,34 +478,54 @@ class MediaHandler extends Plugin
 
     private static function buildCloudKey($dir, $filename)
     {
-        if ($dir === '.' || $dir === '') {
-            return $filename;
-        }
-        return $dir . '/' . $filename;
+        $key = ($dir === '.' || $dir === '') ? $filename : $dir . '/' . $filename;
+        $normalized = StorageInterface::normalizeObjectKey($key);
+        return $normalized === false ? '' : $normalized;
     }
 
     private static function buildThumbFilepath($basedir, $dir, $filename)
     {
-        if ($dir === '.' || $dir === '') {
-            return $basedir . '/' . $filename;
+        $key = self::buildCloudKey($dir, $filename);
+        if ($key === '') {
+            return '';
         }
-        return $basedir . '/' . $dir . '/' . $filename;
+        $path = trailingslashit($basedir) . $key;
+        return self::isSafeUploadFile($path) ? $path : '';
     }
 
     private static function buildStorageManifest($mainKey, $meta, $storageType)
     {
         $keys = [];
         if ($mainKey) {
-            $keys[] = ltrim((string) $mainKey, '/');
+            $normalizedMainKey = StorageInterface::normalizeObjectKey($mainKey);
+            if ($normalizedMainKey !== false) {
+                $keys[] = $normalizedMainKey;
+            }
         }
         if (!empty($meta['file']) && !empty($meta['sizes']) && is_array($meta['sizes'])) {
             $dir = dirname($meta['file']);
             foreach ($meta['sizes'] as $size) {
                 if (!empty($size['file'])) {
-                    $keys[] = self::buildCloudKey($dir, $size['file']);
+                    $sizeKey = self::buildCloudKey($dir, $size['file']);
+                    if ($sizeKey !== '') {
+                        $keys[] = $sizeKey;
+                    }
                 }
             }
         }
+        $storageIdentity = self::getStorageIdentity($storageType);
+        return [
+            'version' => 2,
+            'storage_type' => $storageType,
+            'storage_identity' => $storageIdentity,
+            'main_key' => StorageInterface::normalizeObjectKey($mainKey) ?: '',
+            'keys' => array_values(array_unique(array_filter($keys))),
+            'created_at' => gmdate('c'),
+        ];
+    }
+
+    public static function getStorageIdentity($storageType)
+    {
         $storageIdentity = [];
         if ($storageType === 'oneimg') {
             $storageIdentity = ['endpoint' => self::config('oneimg_endpoint')];
@@ -490,19 +533,54 @@ class MediaHandler extends Plugin
             $storageIdentity = ['endpoint' => self::config('superbed_endpoint'), 'folder_id' => self::config('superbed_folder_id')];
         } elseif ($storageType === 's3') {
             $storageIdentity = ['endpoint' => self::config('s3_endpoint'), 'bucket' => self::config('s3_bucket')];
+        } elseif ($storageType === 'r2') {
+            $storageIdentity = ['endpoint' => self::config('r2_endpoint'), 'bucket' => self::config('r2_bucket')];
         } elseif ($storageType === 'webdav') {
             $storageIdentity = ['endpoint' => self::config('webdav_endpoint'), 'path' => self::config('webdav_path')];
         } elseif ($storageType === 'ftp') {
             $storageIdentity = ['host' => self::config('ftp_host'), 'port' => self::config('ftp_port'), 'path' => self::config('ftp_path')];
         }
-        return [
-            'version' => 2,
-            'storage_type' => $storageType,
-            'storage_identity' => $storageIdentity,
-            'main_key' => ltrim((string) $mainKey, '/'),
-            'keys' => array_values(array_unique(array_filter($keys))),
-            'created_at' => gmdate('c'),
-        ];
+        return $storageIdentity;
+    }
+
+    public static function normalizeStorageIdentity(array $identity)
+    {
+        $normalized = [];
+        foreach ($identity as $name => $value) {
+            $name = sanitize_key((string) $name);
+            if ($name === '') {
+                continue;
+            }
+            $value = is_scalar($value) ? trim((string) $value) : '';
+            if ($name === 'endpoint') {
+                $value = rtrim($value, '/');
+            } elseif ($name === 'host') {
+                $value = strtolower($value);
+            } elseif ($name === 'path' && $value !== '/') {
+                $value = rtrim($value, '/');
+            }
+            $normalized[$name] = $value;
+        }
+        ksort($normalized, SORT_STRING);
+        return $normalized;
+    }
+
+    public static function attachmentStorageMatchesCurrent($postId, $storageType = '')
+    {
+        $manifest = get_post_meta((int) $postId, '_wpstow_storage_manifest', true);
+        if (!is_array($manifest) || empty($manifest['storage_identity']) || !is_array($manifest['storage_identity'])) {
+            // Legacy attachments did not record an identity, so retain their prior behavior.
+            return true;
+        }
+
+        $manifestType = sanitize_key((string) ($manifest['storage_type'] ?? ''));
+        $storageType = sanitize_key((string) ($storageType ?: $manifestType));
+        if ($manifestType !== '' && $storageType !== $manifestType) {
+            return false;
+        }
+
+        return self::normalizeStorageIdentity($manifest['storage_identity'])
+            === self::normalizeStorageIdentity(self::getStorageIdentity($storageType));
     }
 
     public static function plugin_settings_link($links)
@@ -621,16 +699,52 @@ class MediaHandler extends Plugin
 
         if (!empty($meta['file'])) {
             $mainFile = $uploadDir['basedir'] . '/' . $meta['file'];
-            Utils::writeLog('主文件路径: ' . $mainFile . ', 存在=' . (file_exists($mainFile) ? 'yes' : 'no') . ', keepOriginal=' . ($keepOriginal ? 'yes' : 'no'));
+            $mainFileIsSafe = self::isSafeUploadFile($mainFile);
+            Utils::writeLog('主文件路径: ' . $mainFile . ', 存在=' . ($mainFileIsSafe ? 'yes' : 'no') . ', keepOriginal=' . ($keepOriginal ? 'yes' : 'no'));
 
-            if (file_exists($mainFile)) {
-                if ($keepOriginal) {
+            if ($mainFileIsSafe) {
+                $uploadMainFile = $keepOriginal;
+                if (!$keepOriginal) {
+                    // Prefer the largest generated image, but formats without
+                    // sub-sizes (single-file images, video, audio, documents)
+                    // must still upload their only usable file.
+                    $maxSize = 0;
+                    $maxSizeKey = '';
+                    if (!empty($meta['sizes']) && is_array($meta['sizes'])) {
+                        foreach ($meta['sizes'] as $value) {
+                            $area = ($value['width'] ?? 0) * ($value['height'] ?? 0);
+                            if ($area > $maxSize && !empty($value['file'])) {
+                                $maxSize = $area;
+                                $maxSizeKey = $value['file'];
+                            }
+                        }
+                    }
+                    if ($maxSizeKey) {
+                        $dir = dirname($meta['file']);
+                        $cloudKey = self::buildCloudKey($dir, $maxSizeKey);
+                        update_post_meta($post_id, '_wpstow_cloud_key', $cloudKey);
+                        $mainUploaded = true;
+                        Utils::writeLog('使用最大缩略图作为主图: ' . $cloudKey);
+                    } else {
+                        $uploadMainFile = true;
+                        Utils::writeLog('无可用派生文件，改为上传主文件');
+                    }
+                }
+
+                if ($uploadMainFile) {
                     // 上传原图
-                    $mainCloudKey = $meta['file'];
+                    $mainCloudKey = StorageInterface::normalizeObjectKey($meta['file']);
+                    if ($mainCloudKey === false) {
+                        $uploadSucceeded = false;
+                        Utils::writeLog('主文件对象 Key 无效，已拒绝上传');
+                        $mainCloudKey = '';
+                    }
                     Utils::writeLog('上传主文件(元数据中的file): ' . $mainCloudKey);
 
                     try {
-                        $result = $storageClass::upload($mainFile, $mainCloudKey);
+                        $result = $mainCloudKey !== ''
+                            ? $storageClass::upload($mainFile, $mainCloudKey)
+                            : ['status' => false, 'message' => '对象 Key 无效'];
                         if (!empty($result['status'])) {
                             Utils::writeLog('主文件上传成功: ' . $mainCloudKey);
                             update_post_meta($post_id, '_wpstow_cloud_key', $mainCloudKey);
@@ -644,28 +758,6 @@ class MediaHandler extends Plugin
                         $uploadSucceeded = false;
                         Utils::writeLog('主文件上传异常: ' . $e->getMessage());
                     }
-                } else {
-                    // 不保留原图，使用最大尺寸的缩略图作为主图
-                    Utils::writeLog('不保留原图模式，跳过主文件上传');
-                    // 找到最大的缩略图作为 cloud_key
-                    $maxSize = 0;
-                    $maxSizeKey = '';
-                    if (!empty($meta['sizes']) && is_array($meta['sizes'])) {
-                        foreach ($meta['sizes'] as $size => $value) {
-                            $area = ($value['width'] ?? 0) * ($value['height'] ?? 0);
-                            if ($area > $maxSize) {
-                                $maxSize = $area;
-                                $maxSizeKey = $value['file'] ?? '';
-                            }
-                        }
-                    }
-                    if ($maxSizeKey) {
-                        $dir = dirname($meta['file']);
-                        $cloudKey = self::buildCloudKey($dir, $maxSizeKey);
-                        update_post_meta($post_id, '_wpstow_cloud_key', $cloudKey);
-                        $mainUploaded = true;
-                        Utils::writeLog('使用最大缩略图作为主图: ' . $cloudKey);
-                    }
                 }
             } else {
                 $uploadSucceeded = false;
@@ -674,7 +766,7 @@ class MediaHandler extends Plugin
         } else {
             // PDF、音视频等附件的元数据可能没有 file，回退到附件主文件路径。
             $mainFile = get_attached_file($post_id);
-            if ($mainFile && file_exists($mainFile)) {
+            if (self::isSafeUploadFile($mainFile)) {
                 $mainCloudKey = StorageInterface::getCloudKey($mainFile);
                 try {
                     $result = $storageClass::upload($mainFile, $mainCloudKey);
@@ -711,7 +803,7 @@ class MediaHandler extends Plugin
             }
         } else {
             foreach (array_unique($uploadedKeys) as $uploadedKey) {
-                $rolledBack = $storageClass::delete($uploadedKey);
+                $rolledBack = CloudDeletionQueue::deleteObject($storageType, $uploadedKey, '附件上传失败回滚 #' . (int) $post_id);
                 Utils::writeLog(($rolledBack ? '已回滚' : '回滚失败') . '本轮云端对象: ' . $uploadedKey);
             }
             delete_post_meta($post_id, '_wpstow_cloud_key');
@@ -730,7 +822,7 @@ class MediaHandler extends Plugin
         $uploadDir = wp_upload_dir();
 
         $originalFile = get_attached_file($post_id);
-        if ($originalFile && file_exists($originalFile)) {
+        if (self::isSafeUploadFile($originalFile)) {
             if (@unlink($originalFile)) {
                 Utils::writeLog('已删除本地原始文件: ' . $originalFile);
             } else {
@@ -745,7 +837,7 @@ class MediaHandler extends Plugin
                     continue;
                 }
                 $filepath = self::buildThumbFilepath($uploadDir['basedir'], $dir, $value['file']);
-                if (file_exists($filepath)) {
+                if ($filepath !== '' && file_exists($filepath)) {
                     if (@unlink($filepath)) {
                         Utils::writeLog('已删除本地缩略图: ' . $filepath);
                     } else {
@@ -766,15 +858,20 @@ class MediaHandler extends Plugin
         $manifest = get_post_meta($post_id, '_wpstow_storage_manifest', true);
         $manifestType = is_array($manifest) ? ($manifest['storage_type'] ?? '') : '';
         $storedType = sanitize_key((string) get_post_meta($post_id, '_wpstow_storage_type', true));
-        $storageClass = self::getStorageClass($manifestType ?: $storedType);
+        $storageType = sanitize_key((string) ($manifestType ?: $storedType));
+        $storageClass = self::getStorageClass($storageType);
         if (!$storageClass) {
             return;
         }
+        $storageIdentity = is_array($manifest) && !empty($manifest['storage_identity']) && is_array($manifest['storage_identity'])
+            ? $manifest['storage_identity']
+            : self::getStorageIdentity($storageType);
+        $deleteContext = '删除媒体附件 #' . (int) $post_id;
 
         $manifestKeys = is_array($manifest) && !empty($manifest['keys']) && is_array($manifest['keys']) ? $manifest['keys'] : [];
         if ($manifestKeys) {
             foreach (array_unique($manifestKeys) as $cloudKey) {
-                $deleted = $storageClass::delete($cloudKey);
+                $deleted = CloudDeletionQueue::deleteObject($storageType, $cloudKey, $deleteContext, $storageIdentity);
                 Utils::writeLog(($deleted ? '已删除' : '删除失败') . '云端清单对象: ' . $cloudKey);
             }
             delete_post_meta($post_id, '_wpstow_storage_manifest');
@@ -786,7 +883,7 @@ class MediaHandler extends Plugin
 
         $mainKey = get_post_meta($post_id, '_wpstow_cloud_key', true);
         if (!empty($mainKey)) {
-            $deleted = $storageClass::delete($mainKey);
+            $deleted = CloudDeletionQueue::deleteObject($storageType, $mainKey, $deleteContext, $storageIdentity);
             Utils::writeLog(($deleted ? '已删除' : '删除失败') . '云端主文件: ' . $mainKey);
         }
 
@@ -800,7 +897,7 @@ class MediaHandler extends Plugin
                 if ($cloudKey === $mainKey) {
                     continue;
                 }
-                $deleted = $storageClass::delete($cloudKey);
+                $deleted = CloudDeletionQueue::deleteObject($storageType, $cloudKey, $deleteContext, $storageIdentity);
                 Utils::writeLog(($deleted ? '已删除' : '删除失败') . '云端缩略图: ' . $cloudKey);
             }
         }
@@ -868,7 +965,7 @@ class MediaHandler extends Plugin
         $uploadedKeys = [];
 
         $originalFile = get_attached_file($post_id);
-        if ($originalFile && file_exists($originalFile)) {
+        if (self::isSafeUploadFile($originalFile)) {
             $cloudKey = StorageInterface::getCloudKey($originalFile);
             Utils::writeLog('一键替换: 上传原始文件, cloudKey=' . $cloudKey);
             try {
@@ -916,7 +1013,7 @@ class MediaHandler extends Plugin
 
         if (!$mainUploaded || !$allUploaded) {
             foreach (array_unique($uploadedKeys) as $uploadedKey) {
-                $rolledBack = $storageClass::delete($uploadedKey);
+                $rolledBack = CloudDeletionQueue::deleteObject($storageType, $uploadedKey, '一键处理失败回滚 #' . (int) $post_id);
                 Utils::writeLog(($rolledBack ? '已回滚' : '回滚失败') . '一键处理对象: ' . $uploadedKey);
             }
             delete_post_meta($post_id, '_wpstow_cloud_key');
@@ -972,33 +1069,33 @@ class MediaHandler extends Plugin
         if (!is_array($candidate)) {
             $candidate = [];
         }
-        $candidate['storage_type'] = in_array($storage_type, ['oneimg', 'superbed', 's3', 'webdav', 'ftp'], true) ? $storage_type : 's3';
+        $candidate['storage_type'] = in_array($storage_type, ['oneimg', 'superbed', 's3', 'r2', 'webdav', 'ftp'], true) ? $storage_type : 's3';
         $candidate['switch'] = 'enable';
 
         if ($candidate['storage_type'] === 'oneimg') {
-            $candidate['oneimg_endpoint'] = esc_url_raw(wp_unslash($_POST['oneimg_endpoint'] ?? ''));
+            $candidate['oneimg_endpoint'] = esc_url_raw(wp_unslash($_POST['oneimg_endpoint'] ?? ''), ['http', 'https']);
             $candidate['oneimg_token'] = trim((string) wp_unslash($_POST['oneimg_token'] ?? '')) !== ''
-                ? sanitize_text_field(wp_unslash($_POST['oneimg_token']))
+                ? Utils::sanitizeSecret(wp_unslash($_POST['oneimg_token']))
                 : ($candidate['oneimg_token'] ?? '');
             $result = self::withRuntimeConfig($candidate, function () {
                 return OneImgStorage::testConnection();
             });
         } elseif ($candidate['storage_type'] === 'superbed') {
-            $candidate['superbed_endpoint'] = esc_url_raw(wp_unslash($_POST['superbed_endpoint'] ?? ''));
+            $candidate['superbed_endpoint'] = esc_url_raw(wp_unslash($_POST['superbed_endpoint'] ?? ''), ['http', 'https']);
             $candidate['superbed_api_key'] = trim((string) wp_unslash($_POST['superbed_api_key'] ?? '')) !== ''
-                ? sanitize_text_field(wp_unslash($_POST['superbed_api_key']))
+                ? Utils::sanitizeSecret(wp_unslash($_POST['superbed_api_key']))
                 : ($candidate['superbed_api_key'] ?? '');
             $candidate['superbed_folder_id'] = sanitize_text_field(wp_unslash($_POST['superbed_folder_id'] ?? ''));
             $result = self::withRuntimeConfig($candidate, function () {
                 return SuperbedStorage::testConnection();
             });
         } elseif ($candidate['storage_type'] === 's3') {
-            $candidate['s3_endpoint'] = esc_url_raw(wp_unslash($_POST['s3_endpoint'] ?? ''));
+            $candidate['s3_endpoint'] = esc_url_raw(wp_unslash($_POST['s3_endpoint'] ?? ''), ['http', 'https']);
             $candidate['s3_access_key'] = trim((string) wp_unslash($_POST['s3_access_key'] ?? '')) !== ''
-                ? sanitize_text_field(wp_unslash($_POST['s3_access_key']))
+                ? Utils::sanitizeSecret(wp_unslash($_POST['s3_access_key']))
                 : ($candidate['s3_access_key'] ?? '');
             $candidate['s3_secret_key'] = trim((string) wp_unslash($_POST['s3_secret_key'] ?? '')) !== ''
-                ? sanitize_text_field(wp_unslash($_POST['s3_secret_key']))
+                ? Utils::sanitizeSecret(wp_unslash($_POST['s3_secret_key']))
                 : ($candidate['s3_secret_key'] ?? '');
             $candidate['s3_bucket'] = sanitize_text_field(wp_unslash($_POST['s3_bucket'] ?? ''));
             $candidate['s3_region'] = sanitize_text_field(wp_unslash($_POST['s3_region'] ?? ''));
@@ -1006,11 +1103,23 @@ class MediaHandler extends Plugin
             $result = self::withRuntimeConfig($candidate, function () {
                 return S3Storage::testConnection();
             });
+        } elseif ($candidate['storage_type'] === 'r2') {
+            $candidate['r2_endpoint'] = esc_url_raw(wp_unslash($_POST['r2_endpoint'] ?? ''), ['http', 'https']);
+            $candidate['r2_access_key'] = trim((string) wp_unslash($_POST['r2_access_key'] ?? '')) !== ''
+                ? Utils::sanitizeSecret(wp_unslash($_POST['r2_access_key']))
+                : ($candidate['r2_access_key'] ?? '');
+            $candidate['r2_secret_key'] = trim((string) wp_unslash($_POST['r2_secret_key'] ?? '')) !== ''
+                ? Utils::sanitizeSecret(wp_unslash($_POST['r2_secret_key']))
+                : ($candidate['r2_secret_key'] ?? '');
+            $candidate['r2_bucket'] = sanitize_text_field(wp_unslash($_POST['r2_bucket'] ?? ''));
+            $result = self::withRuntimeConfig($candidate, function () {
+                return R2Storage::testConnection();
+            });
         } elseif ($candidate['storage_type'] === 'webdav') {
-            $candidate['webdav_endpoint'] = esc_url_raw(wp_unslash($_POST['webdav_endpoint'] ?? ''));
+            $candidate['webdav_endpoint'] = esc_url_raw(wp_unslash($_POST['webdav_endpoint'] ?? ''), ['http', 'https']);
             $candidate['webdav_username'] = sanitize_text_field(wp_unslash($_POST['webdav_username'] ?? ''));
             $candidate['webdav_password'] = trim((string) wp_unslash($_POST['webdav_password'] ?? '')) !== ''
-                ? sanitize_text_field(wp_unslash($_POST['webdav_password']))
+                ? Utils::sanitizeSecret(wp_unslash($_POST['webdav_password']))
                 : ($candidate['webdav_password'] ?? '');
             $candidate['webdav_path'] = sanitize_text_field(wp_unslash($_POST['webdav_path'] ?? '/'));
             $result = self::withRuntimeConfig($candidate, function () {
@@ -1021,7 +1130,7 @@ class MediaHandler extends Plugin
             $candidate['ftp_port'] = min(65535, max(1, intval($_POST['ftp_port'] ?? 21)));
             $candidate['ftp_username'] = sanitize_text_field(wp_unslash($_POST['ftp_username'] ?? ''));
             $candidate['ftp_password'] = trim((string) wp_unslash($_POST['ftp_password'] ?? '')) !== ''
-                ? sanitize_text_field(wp_unslash($_POST['ftp_password']))
+                ? Utils::sanitizeSecret(wp_unslash($_POST['ftp_password']))
                 : ($candidate['ftp_password'] ?? '');
             $candidate['ftp_path'] = sanitize_text_field(wp_unslash($_POST['ftp_path'] ?? '/'));
             $candidate['ftp_passive'] = (isset($_POST['ftp_passive']) && wp_unslash($_POST['ftp_passive']) === 'no') ? 'no' : 'yes';
@@ -1141,7 +1250,9 @@ class MediaHandler extends Plugin
         }
 
         $proxyUrl = esc_url(MediaProxy::getProxyUrl($cloudKey, $attachment_id));
-        return preg_replace('/href=(["\'])[^"\']*\1/i', 'href="$proxyUrl"', $link, 1);
+        return preg_replace_callback('/href=(["\'])[^"\']*\1/i', static function ($matches) use ($proxyUrl) {
+            return 'href=' . $matches[1] . $proxyUrl . $matches[1];
+        }, $link, 1);
     }
 
     public static function filterImageSrcset($sources, $size_array, $image_src, $image_meta, $attachment_id)
@@ -1245,11 +1356,6 @@ class MediaHandler extends Plugin
         // 处理标题图片 URL (媒体库缩略图)
         if (isset($response->data['title']['rendered'])) {
             // 保持标题不变
-        }
-
-        // 处理媒体库列表中显示的图标/缩略图
-        if (isset($response->data['link']) && self::shouldRewriteCloudUrls($attachment_id, $mainCloudKey, true)) {
-            $response->data['link'] = MediaProxy::getProxyUrl($mainCloudKey, $attachment_id);
         }
 
         return $response;
@@ -1362,7 +1468,7 @@ class MediaHandler extends Plugin
         if (!current_user_can('upload_files')) {
             wp_send_json_error(['message' => '权限不足']);
         }
-        $attachment_id = intval($_POST['attachment_id']);
+        $attachment_id = isset($_POST['attachment_id']) ? intval(wp_unslash($_POST['attachment_id'])) : 0;
         if (!$attachment_id) {
             wp_send_json_error(['message' => '缺少附件ID']);
         }
@@ -1376,5 +1482,23 @@ class MediaHandler extends Plugin
         }
 
         wp_send_json_success(['url' => $url]);
+    }
+
+    private static function isSafeUploadFile($path)
+    {
+        if (!$path || !is_file($path)) {
+            return false;
+        }
+
+        $uploads = wp_upload_dir();
+        $base = realpath((string) $uploads['basedir']);
+        $resolved = realpath((string) $path);
+        if ($base === false || $resolved === false) {
+            return false;
+        }
+
+        $base = trailingslashit(wp_normalize_path($base));
+        $resolved = wp_normalize_path($resolved);
+        return strpos($resolved, $base) === 0;
     }
 }

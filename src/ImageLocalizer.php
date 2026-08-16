@@ -13,7 +13,6 @@ class ImageLocalizer
     public static function init()
     {
         add_filter('wp_insert_post_data', [__CLASS__, 'processPostContent'], 10, 2);
-        add_filter('content_save_pre', [__CLASS__, 'processContentSave'], 99);
     }
 
     public static function processContentSave($content)
@@ -23,7 +22,7 @@ class ImageLocalizer
         }
         self::$processed = true;
 
-        if (empty($content)) {
+        if (empty($content) || !current_user_can('upload_files')) {
             return $content;
         }
 
@@ -44,7 +43,7 @@ class ImageLocalizer
 
     public static function processPostContent($data, $postarr)
     {
-        if (!isset($data['post_content']) || empty($data['post_content'])) {
+        if (!isset($data['post_content']) || empty($data['post_content']) || !current_user_can('upload_files')) {
             return $data;
         }
 
@@ -69,7 +68,7 @@ class ImageLocalizer
 
     private static function processBase64Images($content)
     {
-        $pattern = '/<img[^>]+src=["\']data:image\/(png|jpeg|jpg|gif|webp|bmp|svg\+xml);base64,([^"\']+)["\'][^>]*>/i';
+        $pattern = '/<img[^>]+src=["\']data:image\/(png|jpeg|jpg|gif|webp|bmp);base64,([^"\']+)["\'][^>]*>/i';
 
         if (!preg_match($pattern, $content)) {
             return $content;
@@ -88,14 +87,17 @@ class ImageLocalizer
                 'gif' => 'gif',
                 'webp' => 'webp',
                 'bmp' => 'bmp',
-                'svg+xml' => 'svg',
             ];
 
             $ext = $extMap[$imageType] ?? 'png';
-            $mimeType = 'image/' . ($imageType === 'svg+xml' ? 'svg+xml' : $imageType);
+            $mimeType = 'image/' . $imageType;
 
-            $imageData = base64_decode($base64Data);
-            if ($imageData === false) {
+            if (strlen($base64Data) > (int) ceil(10 * MB_IN_BYTES * 4 / 3) + 4) {
+                Utils::writeLog('base64 图片超过 10 MiB，已跳过');
+                return $matches[0];
+            }
+            $imageData = base64_decode($base64Data, true);
+            if ($imageData === false || $imageData === '' || strlen($imageData) > 10 * MB_IN_BYTES) {
                 Utils::writeLog('base64 解码失败');
                 return $matches[0];
             }
@@ -219,12 +221,45 @@ class ImageLocalizer
             return null;
         }
 
-        $filename = date('YmdHis') . substr(md5(uniqid(mt_rand(), true)), 0, 8) . '.' . $ext;
+        $allowedMimes = [
+            'jpg' => 'image/jpeg',
+            'jpeg' => 'image/jpeg',
+            'png' => 'image/png',
+            'gif' => 'image/gif',
+            'webp' => 'image/webp',
+            'bmp' => 'image/bmp',
+        ];
+        $ext = strtolower((string) $ext);
+        if (!isset($allowedMimes[$ext]) || $allowedMimes[$ext] !== strtolower(trim((string) $mimeType))) {
+            Utils::writeLog('拒绝不受支持的本地化图片格式');
+            return null;
+        }
+        if (!is_string($imageData) || $imageData === '' || strlen($imageData) > 10 * MB_IN_BYTES) {
+            Utils::writeLog('拒绝空图片或超过 10 MiB 的本地化图片');
+            return null;
+        }
+
+        $filename = wp_unique_filename($uploadDir['path'], FileNaming::generateFilename('remote.' . $ext));
         $savePath = $uploadDir['path'] . '/' . $filename;
 
-        $saved = file_put_contents($savePath, $imageData);
-        if ($saved === false) {
+        $saved = file_put_contents($savePath, $imageData, LOCK_EX);
+        if ($saved === false || $saved !== strlen($imageData)) {
             Utils::writeLog('保存临时文件失败: ' . $savePath);
+            @unlink($savePath);
+            return null;
+        }
+
+        $imageInfo = @getimagesize($savePath);
+        $actualMime = is_array($imageInfo) ? strtolower((string) $imageInfo['mime']) : '';
+        if ($actualMime === '' || $actualMime !== $allowedMimes[$ext]) {
+            Utils::writeLog('本地化图片内容与声明格式不匹配，已拒绝入库');
+            @unlink($savePath);
+            return null;
+        }
+        $pixels = (int) ($imageInfo[0] ?? 0) * (int) ($imageInfo[1] ?? 0);
+        if ($pixels < 1 || $pixels > 100000000) {
+            Utils::writeLog('本地化图片尺寸无效或超过一亿像素，已拒绝入库');
+            @unlink($savePath);
             return null;
         }
 
@@ -236,7 +271,7 @@ class ImageLocalizer
             'post_status' => 'inherit'
         ];
 
-        $attachId = wp_insert_attachment($attachment, $savePath);
+        $attachId = wp_insert_attachment($attachment, $savePath, 0, true);
         if (is_wp_error($attachId)) {
             Utils::writeLog('创建附件失败: ' . $attachId->get_error_message());
             @unlink($savePath);
@@ -261,26 +296,25 @@ class ImageLocalizer
 
     private static function getExtFromUrlOrMime($url, $contentType)
     {
-        $path = parse_url($url, PHP_URL_PATH);
-        if ($path) {
-            $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
-            $validExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'ico'];
-            if (in_array($ext, $validExts)) {
-                return $ext;
-            }
-        }
-
+        $contentType = strtolower(trim((string) strtok((string) $contentType, ';')));
         $mimeMap = [
             'image/jpeg' => 'jpg',
             'image/png' => 'png',
             'image/gif' => 'gif',
             'image/webp' => 'webp',
             'image/bmp' => 'bmp',
-            'image/svg+xml' => 'svg',
         ];
-
-        if ($contentType && isset($mimeMap[$contentType])) {
+        if (isset($mimeMap[$contentType])) {
             return $mimeMap[$contentType];
+        }
+
+        $path = parse_url($url, PHP_URL_PATH);
+        if ($path) {
+            $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+            $validExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'];
+            if (in_array($ext, $validExts)) {
+                return $ext;
+            }
         }
 
         return 'jpg';
@@ -295,7 +329,6 @@ class ImageLocalizer
             'gif' => 'image/gif',
             'webp' => 'image/webp',
             'bmp' => 'image/bmp',
-            'svg' => 'image/svg+xml',
         ];
 
         return $map[$ext] ?? 'image/jpeg';

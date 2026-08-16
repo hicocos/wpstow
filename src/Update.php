@@ -94,9 +94,19 @@ class Update
 
     public function fix_update_folder($source, $remote_source, $upgrader, $hook_extra)
     {
+        if (($hook_extra['plugin'] ?? '') !== $this->plugin_slug) {
+            return $source;
+        }
+
         require_once ABSPATH . 'wp-admin/includes/file.php';
-        WP_Filesystem();
+        if (!WP_Filesystem()) {
+            return new \WP_Error('filesystem_unavailable', '插件更新失败，无法初始化 WordPress 文件系统');
+        }
         global $wp_filesystem;
+
+        if (!$wp_filesystem) {
+            return new \WP_Error('filesystem_unavailable', '插件更新失败，WordPress 文件系统不可用');
+        }
 
         Utils::writeLog("[Upgrade] 源路径: $source");
         Utils::writeLog("[Upgrade] 解压路径: $remote_source");

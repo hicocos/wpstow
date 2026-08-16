@@ -61,6 +61,11 @@
             data.s3_bucket = value('s3_bucket');
             data.s3_region = value('s3_region');
             data.s3_path_style = value('s3_path_style');
+        } else if (storageType === 'r2') {
+            data.r2_endpoint = value('r2_endpoint');
+            data.r2_access_key = value('r2_access_key_input');
+            data.r2_secret_key = value('r2_secret_key_input');
+            data.r2_bucket = value('r2_bucket');
         } else if (storageType === 'webdav') {
             data.webdav_endpoint = value('webdav_endpoint');
             data.webdav_username = value('webdav_username');
@@ -89,6 +94,10 @@
             s3: [
                 ['s3_endpoint', 'Endpoint'],
                 ['s3_bucket', 'Bucket']
+            ],
+            r2: [
+                ['r2_endpoint', 'S3 API Endpoint'],
+                ['r2_bucket', 'Bucket']
             ],
             webdav: [
                 ['webdav_endpoint', 'Endpoint'],
@@ -566,6 +575,73 @@
         setResult($('#wpstow-test-result'), '', '');
     }
 
+    function updateNamingPreview() {
+        var preset = value('filename_preset') || 'short';
+        var templates = {
+            short: '{random:8}',
+            date_random: '{year}{month}{day}-{random:8}',
+            original_random: '{name}-{random:8}',
+            timestamp_random: '{timestamp}-{random:8}'
+        };
+        var template = preset === 'custom' ? String(value('filename_template')).trim() : templates[preset];
+        var $preview = $('#wpstow-naming-preview');
+        var $validation = $('#wpstow-naming-validation');
+        if (!$preview.length) {
+            return;
+        }
+
+        var error = '';
+        if (!template) {
+            error = '模板不能为空';
+        } else if (template.length > 120) {
+            error = '模板不能超过 120 个字符';
+        } else if (/[\\/]/.test(template) || template.indexOf('..') !== -1) {
+            error = '不能包含目录符号或连续的点';
+        } else if (/\.[A-Za-z0-9]{1,10}$/.test(template)) {
+            error = '模板末尾无需填写扩展名';
+        }
+
+        var tokenPattern = /\{(?:name|year|month|day|hour|minute|second|timestamp|random(?::\d{1,2})?)\}/g;
+        var literal = template ? template.replace(tokenPattern, '') : '';
+        if (!error && (/[{}]/.test(literal) || (literal && !/^[A-Za-z0-9._-]+$/.test(literal)))) {
+            error = '包含未知字段或不允许的固定文字';
+        }
+        var randomTokens = template ? template.match(/\{random(?::(\d{1,2}))?\}/g) : null;
+        if (!error && !randomTokens) {
+            error = '必须包含 {random:N} 防止重名';
+        }
+        if (!error && randomTokens.some(function (token) {
+            var matched = token.match(/:(\d{1,2})/);
+            var length = matched ? Number(matched[1]) : 8;
+            return length < 8 || length > 32;
+        })) {
+            error = '随机码长度必须为 8–32';
+        }
+
+        if (error) {
+            $preview.text('2026/08/模板语法无效.jpg');
+            $validation.attr('class', 'is-error').text(error);
+            return;
+        }
+
+        var sample = template
+            .replace(/\{name\}/g, 'Summer-Photo')
+            .replace(/\{year\}/g, '2026')
+            .replace(/\{month\}/g, '08')
+            .replace(/\{day\}/g, '16')
+            .replace(/\{hour\}/g, '12')
+            .replace(/\{minute\}/g, '34')
+            .replace(/\{second\}/g, '56')
+            .replace(/\{timestamp\}/g, '1786883696')
+            .replace(/\{random(?::(\d{1,2}))?\}/g, function (match, length) {
+                var source = 'k7m2q9v4x8pdr6tw';
+                var targetLength = Number(length) || 8;
+                return source.repeat(Math.ceil(targetLength / source.length)).slice(0, targetLength);
+            });
+        $preview.text('2026/08/' + sample + '.jpg');
+        $validation.attr('class', 'is-success').text('语法有效，扩展名会自动保留');
+    }
+
     $(document)
         .on('click', '#wpstow-test-connection', testConnection)
         .on('click', '.wpstow-debug-upload-trigger', debugUpload)
@@ -583,7 +659,8 @@
             $('#wpstow-library-process').prop('disabled', true);
             setLibraryNotice('文件类型已改变，请重新扫描。', 'neutral');
         })
-        .on('change input', '[data-depend-id="provider_config_type"], [data-depend-id^="oneimg_"], [data-depend-id^="superbed_"], [data-depend-id^="s3_"], [data-depend-id^="webdav_"], [data-depend-id^="ftp_"]', clearConnectionResult)
+        .on('change input', '[data-depend-id="provider_config_type"], [data-depend-id^="oneimg_"], [data-depend-id^="superbed_"], [data-depend-id^="s3_"], [data-depend-id^="r2_"], [data-depend-id^="webdav_"], [data-depend-id^="ftp_"]', clearConnectionResult)
+        .on('change input', '[data-depend-id="filename_preset"], [data-depend-id="filename_template"]', updateNamingPreview)
         .on('change', '[data-depend-id="image_compress"], [data-depend-id="image_watermark"]', syncImageOptions);
 
     $(function () {
@@ -592,6 +669,7 @@
         window.setTimeout(function () {
             revealInitialSection();
             syncImageOptions();
+            updateNamingPreview();
             pollQueueStatus();
         }, 0);
     });

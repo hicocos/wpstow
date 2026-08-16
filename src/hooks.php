@@ -16,21 +16,22 @@ add_action('wp_ajax_wpstow_queue_status', [PersistentMediaQueue::class, 'ajaxSta
 add_action('wp_ajax_wpstow_queue_control', [PersistentMediaQueue::class, 'ajaxControl']);
 add_action('wpstow_run_media_queue', [PersistentMediaQueue::class, 'runJob']);
 add_action('wpstow_media_queue_watchdog', [PersistentMediaQueue::class, 'watchdog']);
+add_action('wpstow_cloud_delete_watchdog', [CloudDeletionQueue::class, 'watchdog']);
 add_filter('cron_schedules', [PersistentMediaQueue::class, 'addCronSchedule']);
 add_action('plugins_loaded', [PersistentMediaQueue::class, 'maybeInstall'], 5);
+add_action('plugins_loaded', [CloudDeletionQueue::class, 'maybeInstall'], 6);
 
 // 获取附件URL的AJAX处理
 add_action('wp_ajax_wpstow_get_attachment_url', [MediaHandler::class, 'getAttachmentUrlAjax']);
 
 MediaProxy::init();
+DirectUpload::init();
 
 // 已迁移附件的读取和删除生命周期必须始终有效；总开关只控制新上传。
 add_action('delete_attachment', [MediaHandler::class, 'media_del_handle'], 10, 2);
 add_filter('wp_get_attachment_url', [MediaHandler::class, 'filterAttachmentUrl'], 10, 2);
 add_filter('wp_get_attachment_image_src', [MediaHandler::class, 'filterAttachmentImageSrc'], 10, 4);
 add_filter('wp_calculate_image_srcset', [MediaHandler::class, 'filterImageSrcset'], 10, 5);
-add_filter('wp_get_attachment_link', [MediaHandler::class, 'filterAttachmentLink'], 10, 6);
-add_filter('media_send_to_editor', [MediaHandler::class, 'filterMediaSendToEditor'], 10, 3);
 add_filter('rest_prepare_attachment', [MediaHandler::class, 'filterRestAttachment'], 10, 2);
 add_filter('wp_prepare_attachment_for_js', [MediaHandler::class, 'filterPrepareAttachmentForJs'], 10, 2);
 
@@ -48,6 +49,9 @@ if (MediaHandler::config('disable_image_subsizes') === 'yes') {
 }
 
 if (MediaHandler::config('switch') == 'enable') {
+    // Run last so theme-level renamers cannot prepend another long filename afterwards.
+    add_filter('wp_handle_upload_prefilter', [FileNaming::class, 'filterUploadFilename'], PHP_INT_MAX, 1);
+    add_filter('wp_handle_sideload_prefilter', [FileNaming::class, 'filterUploadFilename'], PHP_INT_MAX, 1);
     add_action('add_attachment', [MediaHandler::class, 'add_attachment']);
     add_filter('wp_generate_attachment_metadata', [MediaHandler::class, 'generate_attachment_metadata'], 10, 3);
     add_filter('wp_attachments_s3_url', [MediaHandler::class, 'filterAttachmentsUrl'], 10, 2);

@@ -37,13 +37,14 @@ class VideoProcessor
         foreach ($possiblePaths as $path) {
             $output = [];
             $returnCode = 0;
-            @exec($path . ' -version 2>&1', $output, $returnCode);
+            @exec(escapeshellarg($path) . ' -version 2>&1', $output, $returnCode);
             if ($returnCode === 0) {
-                self::$ffmpegPath = $path;
                 // 查找 ffprobe
                 $probePath = str_replace('ffmpeg', 'ffprobe', $path);
-                @exec($probePath . ' -version 2>&1', $output, $returnCode);
+                $output = [];
+                @exec(escapeshellarg($probePath) . ' -version 2>&1', $output, $returnCode);
                 if ($returnCode === 0) {
+                    self::$ffmpegPath = $path;
                     self::$ffprobePath = $probePath;
                 } else {
                     continue;
@@ -196,7 +197,7 @@ class VideoProcessor
 
             // 如果原始分辨率超过最大分辨率，则缩放
             if ($originalWidth > $maxWidth || $originalHeight > $maxHeight) {
-                $cmd .= ' -vf "scale=\'min(' . $maxWidth . ',iw)\':min(' . $maxHeight . ',ih):force_original_aspect_ratio=decrease"';
+                $cmd .= ' -vf "scale=\'min(' . $maxWidth . ',iw)\':min(' . $maxHeight . ',ih):force_original_aspect_ratio=decrease:force_divisible_by=2"';
             }
         }
 
@@ -419,6 +420,12 @@ class VideoProcessor
     {
         // 只处理视频
         if (!isset($file['type']) || strpos($file['type'], 'video/') !== 0) {
+            return $file;
+        }
+
+        // 当前编码参数固定输出 MP4；其他容器保持原样，避免内容、扩展名和 MIME 不一致。
+        if (strtolower((string) $file['type']) !== 'video/mp4') {
+            Utils::writeLog('VideoProcessor: 当前仅处理 MP4，已跳过 ' . ($file['name'] ?? '未知文件'));
             return $file;
         }
 

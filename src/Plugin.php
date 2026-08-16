@@ -27,6 +27,13 @@ abstract class Plugin
     public $s3_path_style;
     public $s3_custom_url;
 
+    public $r2_endpoint;
+    public $r2_access_key;
+    public $r2_secret_key;
+    public $r2_bucket;
+    public $r2_custom_url;
+    public $r2_presign_ttl;
+
     public $webdav_endpoint;
     public $webdav_username;
     public $webdav_password;
@@ -57,6 +64,8 @@ abstract class Plugin
     public $keep_local;           // 云端上传成功后保留本地副本
     public $cloud_fallback_local; // 云端读取失败时回退本地副本
     public $media_url_mode;       // 已处理媒体链接模式: cloud/local
+    public $filename_preset;      // 新上传文件命名预设
+    public $filename_template;    // 自定义文件名模板
 
     // 视频处理
     public $video_compress;       // 视频压缩开关
@@ -107,6 +116,13 @@ abstract class Plugin
         $this->s3_path_style = $setting['s3_path_style'] ?? 'no';
         $this->s3_custom_url = $setting['s3_custom_url'] ?? '';
 
+        $this->r2_endpoint = $setting['r2_endpoint'] ?? '';
+        $this->r2_access_key = $setting['r2_access_key'] ?? '';
+        $this->r2_secret_key = $setting['r2_secret_key'] ?? '';
+        $this->r2_bucket = $setting['r2_bucket'] ?? '';
+        $this->r2_custom_url = $setting['r2_custom_url'] ?? '';
+        $this->r2_presign_ttl = $setting['r2_presign_ttl'] ?? 900;
+
         $this->webdav_endpoint = $setting['webdav_endpoint'] ?? '';
         $this->webdav_username = $setting['webdav_username'] ?? '';
         $this->webdav_password = $setting['webdav_password'] ?? '';
@@ -139,6 +155,8 @@ abstract class Plugin
         $this->cloud_fallback_local = $setting['cloud_fallback_local'] ?? 'yes';
         // 兼容旧版本：默认继续使用云端链接；管理员可一键切换到本地链接。
         $this->media_url_mode = (($setting['media_url_mode'] ?? 'cloud') === 'local') ? 'local' : 'cloud';
+        $this->filename_preset = $setting['filename_preset'] ?? FileNaming::DEFAULT_PRESET;
+        $this->filename_template = $setting['filename_template'] ?? FileNaming::DEFAULT_TEMPLATE;
 
         // 视频处理
         $this->video_compress = $setting['video_compress'] ?? 'no';
@@ -154,6 +172,12 @@ abstract class Plugin
 
     public static function getLogDir()
     {
-        return self::getPluginDir() . 'logs/';
+        if (defined('WPSTOW_LOG_DIR') && WPSTOW_LOG_DIR) {
+            return trailingslashit((string) WPSTOW_LOG_DIR);
+        }
+
+        $tempDir = function_exists('get_temp_dir') ? get_temp_dir() : sys_get_temp_dir();
+        $siteKey = substr(hash('sha256', defined('ABSPATH') ? ABSPATH : self::getPluginDir()), 0, 12);
+        return trailingslashit($tempDir) . 'wpstow-' . $siteKey . '/';
     }
 }

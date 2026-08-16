@@ -292,6 +292,94 @@
     width: 100%;
 }
 
+.wpstow-naming-guide {
+    width: 100%;
+}
+
+.wpstow-naming-preview {
+    display: grid;
+    grid-template-columns: minmax(120px, auto) minmax(0, 1fr);
+    align-items: center;
+    gap: 8px 16px;
+    padding: 16px;
+    border: 1px solid var(--wpstow-border);
+    border-radius: 6px;
+    background: var(--wpstow-subtle);
+}
+
+.wpstow-naming-preview > span {
+    color: var(--wpstow-muted);
+    font-size: 12px;
+}
+
+.wpstow-naming-preview > code {
+    overflow-wrap: anywhere;
+    color: var(--wpstow-text);
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.wpstow-naming-preview > small {
+    grid-column: 2;
+}
+
+.wpstow-naming-preview > small.is-success { color: var(--wpstow-success); }
+.wpstow-naming-preview > small.is-error { color: var(--wpstow-danger); }
+
+.wpstow-naming-help {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 24px;
+    margin-top: 20px;
+}
+
+.wpstow-naming-help strong {
+    display: block;
+    margin-bottom: 10px;
+    color: var(--wpstow-text);
+}
+
+.wpstow-naming-help dl {
+    display: grid;
+    grid-template-columns: minmax(150px, auto) minmax(0, 1fr);
+    gap: 8px 14px;
+    margin: 0;
+}
+
+.wpstow-naming-help dt,
+.wpstow-naming-help dd {
+    margin: 0;
+    line-height: 1.6;
+}
+
+.wpstow-naming-help dd,
+.wpstow-naming-note {
+    color: var(--wpstow-muted);
+}
+
+.wpstow-naming-note {
+    margin: 18px 0 0;
+    line-height: 1.7;
+}
+
+@media (max-width: 782px) {
+    .wpstow-naming-help {
+        grid-template-columns: 1fr;
+    }
+
+    .wpstow-naming-preview {
+        grid-template-columns: 1fr;
+    }
+
+    .wpstow-naming-preview > small {
+        grid-column: 1;
+    }
+
+    .wpstow-naming-help dl {
+        grid-template-columns: 1fr;
+    }
+}
+
 .wpstow-library-manager {
     width: 100%;
     color: var(--wpstow-text);

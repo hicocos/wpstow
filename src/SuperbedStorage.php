@@ -124,7 +124,17 @@ class SuperbedStorage extends StorageInterface
         }
 
         $httpCode = (int) wp_remote_retrieve_response_code($response);
-        $payload = json_decode((string) wp_remote_retrieve_body($response), true);
+        $responseBody = (string) wp_remote_retrieve_body($response);
+        if ($httpCode >= 200 && $httpCode < 300 && trim($responseBody) === '') {
+            return [
+                'status' => true,
+                'http_code' => $httpCode,
+                'message' => 'HTTP ' . $httpCode,
+                'data' => [],
+            ];
+        }
+
+        $payload = json_decode($responseBody, true);
         if (!is_array($payload)) {
             return ['status' => false, 'http_code' => $httpCode, 'message' => '聚合图床返回了无效 JSON'];
         }
@@ -206,8 +216,19 @@ class SuperbedStorage extends StorageInterface
         }
 
         if (!self::saveMapping($cloudKey, $file, $config['endpoint'])) {
-            self::apiRequest('POST', 'api/v1/files/batch/delete', ['file_ids' => [(string) $file['id']]], $config['endpoint']);
-            return ['status' => false, 'message' => '聚合图床上传成功，但 WordPress 无法保存对象映射，已尝试清理远端文件'];
+            $fileId = (string) $file['id'];
+            self::apiRequest('POST', 'api/v1/files/batch/delete', ['file_ids' => [$fileId]], $config['endpoint']);
+            $cleanup = self::apiRequest('DELETE', 'api/v1/trash/' . rawurlencode($fileId), null, $config['endpoint']);
+            if (empty($cleanup['status'])) {
+                usleep(250000);
+                $cleanup = self::apiRequest('DELETE', 'api/v1/trash/' . rawurlencode($fileId), null, $config['endpoint']);
+            }
+            if (empty($cleanup['status'])) {
+                Utils::writeLog('聚合图床映射保存失败后的永久清理失败: id=' . sanitize_text_field($fileId) . ', ' . ($cleanup['message'] ?? '未知错误'));
+            }
+            return ['status' => false, 'message' => !empty($cleanup['status'])
+                ? '聚合图床上传成功，但 WordPress 无法保存对象映射，远端文件已永久清理'
+                : '聚合图床上传成功，但 WordPress 无法保存对象映射，远端文件永久清理失败'];
         }
 
         return [
@@ -227,22 +248,45 @@ class SuperbedStorage extends StorageInterface
     {
         $mapping = self::getMapping($key);
         if (!$mapping || empty($mapping['id'])) {
-            return false;
+            return true;
         }
 
-        $result = self::apiRequest(
-            'POST',
-            'api/v1/files/batch/delete',
-            ['file_ids' => [(string) $mapping['id']]],
-            $mapping['endpoint'] ?? null
-        );
-        $payload = $result['data'] ?? [];
-        if (!empty($result['status']) && (int) ($payload['trashed_count'] ?? 0) === 1 && (int) ($payload['failed_count'] ?? 0) === 0) {
+        $id = (string) $mapping['id'];
+        $endpoint = $mapping['endpoint'] ?? null;
+        $wasPending = !empty($mapping['delete_pending_at']);
+        $trashResult = ['status' => true, 'message' => '文件已在回收站'];
+
+        if (!$wasPending) {
+            $trashResult = self::apiRequest(
+                'POST',
+                'api/v1/files/batch/delete',
+                ['file_ids' => [$id]],
+                $endpoint
+            );
+            $payload = $trashResult['data'] ?? [];
+            $movedToTrash = !empty($trashResult['status'])
+                && (int) ($payload['trashed_count'] ?? 0) === 1
+                && (int) ($payload['failed_count'] ?? 0) === 0;
+            if ($movedToTrash) {
+                $mapping['delete_pending_at'] = gmdate('c');
+                update_option(self::mappingOptionName($key), $mapping, false);
+            }
+        }
+
+        $permanentResult = self::apiRequest('DELETE', 'api/v1/trash/' . rawurlencode($id), null, $endpoint);
+        $missingFromTrash = (int) ($permanentResult['http_code'] ?? 0) === 404;
+        $pendingSince = $wasPending ? strtotime((string) $mapping['delete_pending_at']) : 0;
+        $confirmedAlreadyGone = $missingFromTrash && $pendingSince > 0 && $pendingSince <= time() - 30;
+        if (!empty($permanentResult['status']) || $confirmedAlreadyGone) {
             delete_option(self::mappingOptionName($key));
             return true;
         }
 
-        Utils::writeLog('聚合图床删除失败: id=' . sanitize_text_field((string) $mapping['id']) . ', ' . ($result['message'] ?? '未知错误'));
+        Utils::writeLog(
+            '聚合图床永久删除失败: id=' . sanitize_text_field($id)
+            . ', trash=' . ($trashResult['message'] ?? '未知错误')
+            . ', permanent=' . ($permanentResult['message'] ?? '未知错误')
+        );
         return false;
     }
 
@@ -272,43 +316,6 @@ class SuperbedStorage extends StorageInterface
         if ($url === '') {
             return ['status' => false, 'http_code' => 404, 'message' => '聚合图床对象映射不存在'];
         }
-
-        $headers = [];
-        if (!empty($_SERVER['HTTP_RANGE'])) {
-            $headers[] = 'Range: ' . sanitize_text_field(wp_unslash($_SERVER['HTTP_RANGE']));
-        }
-        $responseHeaders = [];
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_MAXREDIRS => 3,
-            CURLOPT_HTTPHEADER => $headers,
-            CURLOPT_CONNECTTIMEOUT => 10,
-            CURLOPT_TIMEOUT => 120,
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_SSL_VERIFYHOST => 2,
-            CURLOPT_HEADERFUNCTION => function ($ch, $header) use (&$responseHeaders) {
-                $length = strlen($header);
-                $parts = explode(':', $header, 2);
-                if (count($parts) === 2) {
-                    $name = strtolower(trim($parts[0]));
-                    if (in_array($name, ['content-type', 'content-length', 'content-range', 'cache-control', 'etag', 'last-modified', 'accept-ranges'], true)) {
-                        $responseHeaders[$name] = trim($parts[1]);
-                    }
-                }
-                return $length;
-            },
-        ]);
-
-        $data = curl_exec($ch);
-        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $error = curl_error($ch);
-        curl_close($ch);
-
-        if ($data !== false && $httpCode >= 200 && $httpCode < 300) {
-            return ['status' => true, 'data' => $data, 'http_code' => $httpCode, 'headers' => $responseHeaders];
-        }
-        return ['status' => false, 'http_code' => $httpCode, 'message' => $error ?: 'HTTP ' . $httpCode];
+        return self::downloadHttpUrl($url);
     }
 }

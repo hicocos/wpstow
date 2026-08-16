@@ -4,26 +4,28 @@ Tags: media, superbed, oneimg, s3, cloudflare-r2, webdav, ftp, image-optimizatio
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 1.9.0
+Stable tag: 2.0.0
 License: MIT
 License URI: https://opensource.org/license/mit/
 
-将 WordPress 媒体安全转存到聚合图床、OneImg、S3 兼容对象存储、WebDAV 或 FTP，并支持图片优化和 FFmpeg 视频处理。
+将 WordPress 媒体安全转存到聚合图床、OneImg、S3、Cloudflare R2、WebDAV 或 FTP，并支持图片优化和 FFmpeg 视频处理。
 
 == Description ==
 
-WPStow 在 WordPress 完成媒体处理后上传主文件和缩略图。只有全部必需对象上传成功后，才会删除本地副本；失败时会保留本地文件并记录可重试错误。
+WPStow 支持 S3/R2 浏览器直传；需要服务器处理或直传失败时，自动回退 WordPress 流式上传。只有全部必需对象上传成功后，才会删除本地副本；失败时会保留本地文件并记录可重试错误。
 
 插件兼容标准 WordPress 主题，并在后台提供统一的 WPStow 设置页面。主题或其他插件已提供 CSF 时直接复用，否则加载插件内置版本，设置界面与配置结构保持一致。
 
 主要能力：
 
-* S3 兼容存储：AWS S3、Cloudflare R2、MinIO 等
+* S3 兼容存储与 Cloudflare R2 使用独立配置和附件归属
+* S3/R2 小文件预签名 PUT，大文件 Multipart 分片直传、并发上传、内容抽样校验和指数退避重试
+* 直传失败自动把浏览器原文件交回 WordPress，并使用不占用整文件内存的流式服务器上传
 * OneImg API 图床（上传、直链访问、按图片 ID 删除）
-* 聚合图床（Superbed）API（上传、直链访问、按文件 UUID 移入回收站）
+* 聚合图床（Superbed）API（上传、直链访问、按文件 UUID 永久删除）
 * WebDAV、FTP/FTPS
 * 图片、视频、音频和其他附件可分别选择存储源或仅保留本地
-* 私有桶代理访问或自定义 CDN/公开域名直连
+* R2 私有桶通过固定媒体 URL 302 到短期预签名地址，文件内容不经过 WordPress/PHP
 * 图片外链本地化、压缩、文字/图片水印
 * FFmpeg 视频压缩、分辨率限制和视频水印
 * 媒体库 URL、缩略图、srcset、REST 与编辑器适配
@@ -31,6 +33,7 @@ WPStow 在 WordPress 完成媒体处理后上传主文件和缩略图。只有�
 * 管理后台状态概览、连接测试、上传自检和脱敏日志
 * 扫描现有媒体库，分类统计未接管附件并通过服务器持久队列安全接管
 * 上传失败保护：未完整成功时绝不删除本地原件
+* 云端删除保护：即时重试失败后写入持久队列，由 WP-Cron 继续退避重试
 
 == Installation ==
 
@@ -43,15 +46,17 @@ WPStow 在 WordPress 完成媒体处理后上传主文件和缩略图。只有�
 7. 将“自动转存新上传”设为“启用”，保存设置。
 8. 上传测试文件，确认媒体 URL 和云端对象。
 
+S3/R2 直传还需要在 Bucket CORS 中允许本站 Origin 使用 PUT，并在 ExposeHeaders 中加入 ETag。本地副本选择“上传后删除”，且媒体不需要缩略图、压缩或水印时自动启用直传。
+
 == Frequently Asked Questions ==
 
 = 为什么配置了 S3，媒体仍在本地？ =
 
 S3 配置和自动转存总开关是两件事。必须把“自动转存新上传”设置为“启用”。插件只在云端上传完整成功后删除本地副本。
 
-= 为什么媒体 URL 是 admin-ajax.php？ =
+= 为什么 R2 媒体 URL 是 admin-ajax.php？ =
 
-未配置自定义访问 URL 时，插件使用私有桶代理：WordPress 在服务器端签名并读取对象。若桶已通过 R2 自定义域名或 CDN 公开，可填写“S3 自定义访问 URL”以让浏览器直接访问云端。
+这是永久固定的链接解析入口。WPStow 校验对象归属后返回 302，浏览器再通过短期预签名 URL 直接读取私有 R2 对象；文件内容不经过 WordPress/PHP。私有桶无需开启公开访问，也不要填写“公开访问 URL”。
 
 = S3 对象路径如何组成？ =
 
@@ -73,10 +78,21 @@ WPStow 会把媒体文件发送到管理员配置的存储服务。存储凭据�
 
 * 建议使用 HTTPS Endpoint。
 * S3/R2 凭据应遵循最小权限原则，只允许指定 Bucket 的读写删除。
-* 私有桶使用代理访问；公开桶建议配置 CDN/自定义域名降低 PHP 带宽开销。
+* R2 私有桶使用预签名 302 直连；公开桶可配置 CDN/自定义域名。
 * 生产环境应限制插件日志目录的 Web 访问并定期轮换云存储凭据。
 
 == Changelog ==
+
+= 2.0.0 =
+* 将通用 S3 与 Cloudflare R2 拆分为独立存储后端、配置和附件归属。
+* R2 私有桶新增固定媒体 URL、短期 SigV4 预签名与 302 直连，文件内容不再经过 WordPress/PHP。
+* S3/R2 新增浏览器预签名直传；大文件使用 Multipart、动态分片、3 路并发、分片重试和签名刷新。
+* 直传失败自动切回 WordPress 原生上传，S3/R2 服务器兜底改为流式传输，避免整文件占用 PHP 内存。
+* 自动迁移旧版使用 R2 S3 API Endpoint 的配置、分类路由和既有附件元数据。
+* 云端对象删除新增即时重试和持久后台重试队列，避免临时网络故障产生孤儿文件。
+* 聚合图床删除由“移入回收站”改为继续执行永久删除。
+* 加固 AJAX 权限与 nonce、对象 Key、附件存储身份、外链图片 SSRF、凭据回显和本地文件删除边界。
+* 内置 Codestar Framework 更新至 2.3.1，并兼容复用 Panda/Zibll 主题提供的 CSF。
 
 = 1.9.0 =
 * 新增“原图单文件模式”，可禁止新图片生成全部 WordPress、主题和插件中间尺寸。

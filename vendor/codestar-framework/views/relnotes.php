@@ -1,5 +1,98 @@
 <?php if ( ! defined( 'ABSPATH' ) ) { die; } // Cannot access directly. ?>
 
+<h3>v2.3.1</h3>
+<ul>
+  <li>Added: PHP 8.x compatible.</li>
+  <li>Added: WordPress 6.4 compatible.</li>
+  <li>Fixed: PHP 8.x deprecated notices.</li>
+</ul>
+
+<h3>v2.3.0</h3>
+<ul>
+  <li>Added: WordPress 6.2 compatible.</li>
+</ul>
+
+<h3>v2.2.9</h3>
+<ul>
+  <li>Added: WordPress 6.1 compatible.</li>
+  <li>Fixed: Added check/uncheck all option for checkbox field.</li>
+  <li>Updated: Google Web Fonts array added new fonts.</li>
+  <li>Updated: JS libraries (codemirror, leaflet, etc).</li>
+  <li>Improved: Some JS and CSS coding.</li>
+</ul>
+
+<h3>v2.2.8</h3>
+<ul>
+  <li>Fixed: Free vs Pro version load priority conflict.</li>
+</ul>
+
+<h3>v2.2.7</h3>
+<ul>
+  <li>Added: Number field "min", "max", "step" options.</li>
+  <li>Updated: Google Web Fonts array added new fonts.</li>
+  <li>Updated: JS libraries (codemirror, leaflet, etc).</li>
+  <li>Improved: Group field "custom title and prefix" option (samples added).</li>
+  <li>Improved: Some JS and CSS coding.</li>
+</ul>
+
+<h3>v2.2.6</h3>
+<ul>
+  <li>Added: WordPress 5.9 compatible.</li>
+  <li>Added: New field "DateTime" both date and time option.</li>
+  <li>Improved: Some JS and CSS coding.</li>
+</ul>
+
+<h3>v2.2.5</h3>
+<ul>
+  <li>Added: Dependency new "contains" condition feature.</li>
+  <li>Fixed: Admin bar menu show in for non-admin capabilities.</li>
+  <li>Updated: Google Web Fonts array added 300+ new fonts.</li>
+  <li>Updated: "Font Awesome 5 Free" package and added new icons.</li>
+  <li>Updated: JS libraries (codemirror, leaflet, etc).</li>
+  <li>Improved: "Shortcode" and "Icon" modal popups responsive css.</li>
+  <li>Improved: Usage anywhere framework fields.</li>
+</ul>
+
+<h3>v2.2.4</h3>
+<ul>
+  <li>Added: WordPress 5.8 compatible.</li>
+  <li>Fixed: Widget Framework after WP 5.8 block-based widgets issue.</li>
+  <li>Fixed: Shortcode Framework "Elementor" php8 error throw issue.</li>
+  <li>Updated: Google Web Fonts array.</li>
+  <li>Updated: "Font Awesome 5 Free" package and added new icons.</li>
+  <li>Updated: JS libraries (codemirror, leaflet, etc).</li>
+  <li>Improved: Some js and css coding.</li>
+</ul>
+
+<h3>v2.2.3</h3>
+<ul>
+  <li>Added: Upload field show "preview" option.</li>
+  <li>Added: "description" option for all framework create sections array.</li>
+  <li>Fixed: Option Framework admin sub-menu link click issue on Mobile.</li>
+</ul>
+
+<h3>v2.2.2</h3>
+<ul>
+  <li>Added: WordPress 5.7 compatible.</li>
+  <li>Fixed: Spinner field unit issue in repeater fields.</li>
+  <li>Fixed: Media field svg preview issue.</li>
+  <li>Updated: Google Web Fonts array.</li>
+  <li>Updated: "Font Awesome 5 Free" package and added new icons.</li>
+  <li>Updated: JS libraries (codemirror, leaflet, etc).</li>
+  <li>Improved: Mobile device styles.</li>
+  <li>Improved: Multiple instances for avoid potential conflicts.</li>
+  <li>Improved: Callback field for class method calls.</li>
+</ul>
+
+<h3>v2.2.1</h3>
+<ul>
+  <li>Added: Metabox sections can be show by specific post_type option.</li>
+  <li>Added: Inline tabs style for Metabox and Options Frameworks.</li>
+  <li>Added: Nav menu "locations" select field options.</li>
+  <li>Fixed: Minor bug fixes and improvements.</li>
+  <li>Improved: Path-finder function for fix issue missing styles.</li>
+</ul>
+
 <h3>v2.2.0</h3>
 <ul>
   <li>Added: Output feature for Taxonomy Framework fields.</li>
@@ -38,6 +131,7 @@
   <li>Updated: Assets library (csf.css to style.css, csf.js to main.js).</li>
   <li>Improved: Sanitize/Validate callback method.</li>
   <li>Improved: Global dependency feature.</li>
+  <li>Improved: Usage anywhere framework fields.</li>
 </ul>
 
 <h3>v2.1.6</h3>
@@ -254,3 +348,4 @@
 <ul>
   <li>Initial release.</li>
 </ul>
+

@@ -203,8 +203,20 @@ class OneImgStorage extends StorageInterface
         }
 
         if (!self::saveMapping($cloudKey, $file, $config['endpoint'])) {
-            self::apiRequest('DELETE', 'images/' . (int) $file['id'], $config['endpoint']);
-            return ['status' => false, 'message' => 'OneImg 上传成功，但 WordPress 无法保存对象映射，已尝试清理远端图片'];
+            $cleanup = self::apiRequest('DELETE', 'images/' . (int) $file['id'], $config['endpoint']);
+            if (empty($cleanup['status']) && (int) ($cleanup['http_code'] ?? 0) !== 404 && (int) ($cleanup['api_code'] ?? 0) !== 404) {
+                usleep(250000);
+                $cleanup = self::apiRequest('DELETE', 'images/' . (int) $file['id'], $config['endpoint']);
+            }
+            $cleaned = !empty($cleanup['status'])
+                || (int) ($cleanup['http_code'] ?? 0) === 404
+                || (int) ($cleanup['api_code'] ?? 0) === 404;
+            if (!$cleaned) {
+                Utils::writeLog('OneImg 映射保存失败后的远端清理失败: id=' . (int) $file['id'] . ', ' . ($cleanup['message'] ?? '未知错误'));
+            }
+            return ['status' => false, 'message' => $cleaned
+                ? 'OneImg 上传成功，但 WordPress 无法保存对象映射，远端图片已清理'
+                : 'OneImg 上传成功，但 WordPress 无法保存对象映射，远端图片清理失败'];
         }
 
         return [
@@ -225,7 +237,7 @@ class OneImgStorage extends StorageInterface
     {
         $mapping = self::getMapping($key);
         if (!$mapping || empty($mapping['id'])) {
-            return false;
+            return true;
         }
 
         $result = self::apiRequest('DELETE', 'images/' . (int) $mapping['id'], $mapping['endpoint'] ?? null);
@@ -272,43 +284,6 @@ class OneImgStorage extends StorageInterface
         if ($url === '') {
             return ['status' => false, 'http_code' => 404, 'message' => 'OneImg 对象映射不存在'];
         }
-
-        $headers = [];
-        if (!empty($_SERVER['HTTP_RANGE'])) {
-            $headers[] = 'Range: ' . sanitize_text_field(wp_unslash($_SERVER['HTTP_RANGE']));
-        }
-        $responseHeaders = [];
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_MAXREDIRS => 3,
-            CURLOPT_HTTPHEADER => $headers,
-            CURLOPT_CONNECTTIMEOUT => 10,
-            CURLOPT_TIMEOUT => 120,
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_SSL_VERIFYHOST => 2,
-            CURLOPT_HEADERFUNCTION => function ($ch, $header) use (&$responseHeaders) {
-                $length = strlen($header);
-                $parts = explode(':', $header, 2);
-                if (count($parts) === 2) {
-                    $name = strtolower(trim($parts[0]));
-                    if (in_array($name, ['content-type', 'content-length', 'content-range', 'cache-control', 'etag', 'last-modified', 'accept-ranges'], true)) {
-                        $responseHeaders[$name] = trim($parts[1]);
-                    }
-                }
-                return $length;
-            },
-        ]);
-
-        $data = curl_exec($ch);
-        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $error = curl_error($ch);
-        curl_close($ch);
-
-        if ($data !== false && $httpCode >= 200 && $httpCode < 300) {
-            return ['status' => true, 'data' => $data, 'http_code' => $httpCode, 'headers' => $responseHeaders];
-        }
-        return ['status' => false, 'http_code' => $httpCode, 'message' => $error ?: 'HTTP ' . $httpCode];
+        return self::downloadHttpUrl($url);
     }
 }

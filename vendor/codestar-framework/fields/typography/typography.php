@@ -85,7 +85,7 @@ if ( ! class_exists( 'CSF_Field_typography' ) ) {
       $chosen_class     = ( $this->chosen ) ? ' csf--chosen' : '';
       $line_height_unit = ( ! empty( $args['line_height_unit'] ) ) ? $args['line_height_unit'] : $args['unit'];
 
-      echo '<div class="csf--typography'. esc_attr( $chosen_class ) .'" data-unit="'. esc_attr( $args['unit'] ) .'" data-line-height-unit="'. esc_attr( $line_height_unit ) .'" data-exclude="'. esc_attr( $args['exclude'] ) .'">';
+      echo '<div class="csf--typography'. esc_attr( $chosen_class ) .'" data-depend-id="'. esc_attr( $this->field['id'] ) .'" data-unit="'. esc_attr( $args['unit'] ) .'" data-line-height-unit="'. esc_attr( $line_height_unit ) .'" data-exclude="'. esc_attr( $args['exclude'] ) .'">';
 
         echo '<div class="csf--blocks csf--blocks-selects">';
 
@@ -110,7 +110,7 @@ if ( ! class_exists( 'CSF_Field_typography' ) ) {
               'Impact, Charcoal, sans-serif',
               "'Lucida Sans Unicode', 'Lucida Grande', sans-serif",
               'Tahoma, Geneva, sans-serif',
-              "'Trebuchet MS', Helvetica, sans-serif'",
+              "'Trebuchet MS', Helvetica, sans-serif",
               'Verdana, Geneva, sans-serif',
               "'Courier New', Courier, monospace",
               "'Lucida Console', Monaco, monospace",
@@ -518,7 +518,7 @@ if ( ! class_exists( 'CSF_Field_typography' ) ) {
         'word-spacing',
       );
 
-      $unit = ( ! empty( $this->value['unit'] ) ) ? $this->value['unit'] : '';
+      $unit = ( ! empty( $this->value['unit'] ) ) ? $this->value['unit'] : 'px';
       $line_height_unit = ( ! empty( $this->value['line_height_unit'] ) ) ? $this->value['line_height_unit'] : $unit;
 
       foreach ( $properties as $property ) {

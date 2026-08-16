@@ -175,6 +175,13 @@ class Utils extends Plugin
         return rtrim(rtrim(number_format($value, 2, '.', ''), '0'), '.') . ' ' . $units[$unitIndex];
     }
 
+    public static function sanitizeSecret($value)
+    {
+        $value = trim((string) $value);
+        $value = preg_replace('/[\x00-\x1F\x7F]/', '', $value);
+        return substr((string) $value, 0, 4096);
+    }
+
     private static function prepareLogDir()
     {
         $logDir = self::getLogDir();
@@ -245,6 +252,14 @@ class Utils extends Plugin
             $message = substr($message, 0, self::LOG_MAX_ENTRY_BYTES) . '... [日志单条过长，已截断]';
         }
 
+        $patterns = [
+            '/((?:Authorization|X-API-Key)\s*[:=]\s*)[^\s,;]+/i',
+            '/((?:oneimg_token|password|secret(?:_key)?|api[_-]?key|access[_-]?key|token)["\']?\s*[:=]\s*["\']?)[^"\'\s,}&]+/i',
+            '/(X-Amz-(?:Credential|Signature)=)[^&\s]+/i',
+            '#(https?://[^:/\s]+:)[^@/\s]+@#i',
+        ];
+        $message = preg_replace($patterns, '$1[REDACTED]', $message);
+
         return $message;
     }
 
@@ -282,17 +297,9 @@ class Utils extends Plugin
             return false;
         }
 
-        for ($i = self::LOG_MAX_BACKUPS; $i >= 1; $i--) {
-            $backup = $logFile . '.' . $i;
-            if (!is_file($backup)) {
-                continue;
-            }
-
-            if ($i >= self::LOG_MAX_BACKUPS) {
-                @unlink($backup);
-            } else {
-                @rename($backup, $logFile . '.' . ($i + 1));
-            }
+        $backup = $logFile . '.1';
+        if (is_file($backup)) {
+            @unlink($backup);
         }
 
         if (is_file($logFile)) {
