@@ -4,7 +4,7 @@ Tags: media, superbed, oneimg, s3, cloudflare-r2, webdav, ftp, image-optimizatio
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 2.0.1
+Stable tag: 2.0.2
 License: MIT
 License URI: https://opensource.org/license/mit/
 
@@ -83,6 +83,9 @@ WPStow 会把媒体文件发送到管理员配置的存储服务。存储凭据�
 * 生产环境应限制插件日志目录的 Web 访问并定期轮换云存储凭据。
 
 == Changelog ==
+
+= 2.0.2 =
+* 作者名称改为纯文本“梅零落”，不再附加网站跳转链接。
 
 = 2.0.1 =
 * 新增 GitHub Release 更新检测、插件列表手动检查和 WordPress 原生一键更新。

@@ -268,7 +268,7 @@ class Update
             'name' => 'WPStow',
             'slug' => $this->plugin_dir,
             'version' => $version,
-            'author' => '<a href="https://moepick.com/">梅零落</a>',
+            'author' => '梅零落',
             'homepage' => esc_url_raw($release['html_url'] ?? self::GITHUB_REPOSITORY_URL),
             'requires' => '6.0',
             'tested' => '7.0',
