@@ -4,7 +4,7 @@ Tags: media, superbed, oneimg, s3, cloudflare-r2, webdav, ftp, image-optimizatio
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 2.0.0
+Stable tag: 2.0.1
 License: MIT
 License URI: https://opensource.org/license/mit/
 
@@ -31,6 +31,7 @@ WPStow 支持 S3/R2 浏览器直传；需要服务器处理或直传失败时，
 * 媒体库 URL、缩略图、srcset、REST 与编辑器适配
 * 可选原图单文件模式，禁止生成缩略图、缩放图和自动格式转换副本
 * 管理后台状态概览、连接测试、上传自检和脱敏日志
+* 通过 GitHub Release 自动检测新版本，并支持在插件列表一键更新
 * 扫描现有媒体库，分类统计未接管附件并通过服务器持久队列安全接管
 * 上传失败保护：未完整成功时绝不删除本地原件
 * 云端删除保护：即时重试失败后写入持久队列，由 WP-Cron 继续退避重试
@@ -82,6 +83,11 @@ WPStow 会把媒体文件发送到管理员配置的存储服务。存储凭据�
 * 生产环境应限制插件日志目录的 Web 访问并定期轮换云存储凭据。
 
 == Changelog ==
+
+= 2.0.1 =
+* 新增 GitHub Release 更新检测、插件列表手动检查和 WordPress 原生一键更新。
+* 在 WPStow 设置中新增“主题更新”板块，展示当前版本、最新版本和更新状态。
+* 插件作者展示统一为“梅零落”，插件条目链接统一为“访问插件主页”。
 
 = 2.0.0 =
 * 将通用 S3 与 Cloudflare R2 拆分为独立存储后端、配置和附件归属。

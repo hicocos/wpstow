@@ -375,6 +375,65 @@ function wpstow_csf_render_media_manager()
     echo '</div>';
 }
 
+function wpstow_csf_render_update_panel()
+{
+    $pluginSlug = 'wpstow/wpstow.php';
+    $transient = get_site_transient('update_plugins');
+    $available = is_object($transient) && isset($transient->response[$pluginSlug])
+        ? $transient->response[$pluginSlug]
+        : null;
+    $current = is_object($transient) && isset($transient->no_update[$pluginSlug])
+        ? $transient->no_update[$pluginSlug]
+        : null;
+    $knownUpdate = $available ?: $current;
+    $latestVersion = is_object($knownUpdate)
+        ? (string) ($knownUpdate->new_version ?? ($knownUpdate->version ?? ''))
+        : '';
+
+    if ($available && $latestVersion !== '') {
+        $statusClass = 'is-update';
+        $statusLabel = '发现新版本';
+        $statusDesc = 'v' . $latestVersion . ' 已发布，可以直接在线升级。';
+    } elseif ($latestVersion !== '') {
+        $statusClass = 'is-current';
+        $statusLabel = '已是最新版';
+        $statusDesc = '当前安装版本与 GitHub 最新稳定版一致。';
+    } else {
+        $statusClass = 'is-unknown';
+        $statusLabel = '尚未检查';
+        $statusDesc = '点击下方按钮获取 GitHub 最新稳定版本。';
+    }
+
+    $checkUrl = wp_nonce_url(
+        admin_url('admin-post.php?action=wpstow_check_updates&return_to=settings'),
+        'wpstow_check_updates'
+    );
+    $upgradeUrl = wp_nonce_url(
+        self_admin_url('update.php?action=upgrade-plugin&plugin=' . rawurlencode($pluginSlug)),
+        'upgrade-plugin_' . $pluginSlug
+    );
+
+    echo '<div class="wpstow-update-panel">';
+    echo '<div class="wpstow-update-head">';
+    echo '<div><span>WPStow 稳定版本</span><strong>在线更新</strong><small>' . esc_html($statusDesc) . '</small></div>';
+    echo '<span class="wpstow-update-state ' . esc_attr($statusClass) . '"><i></i>' . esc_html($statusLabel) . '</span>';
+    echo '</div>';
+    echo '<div class="wpstow-update-versions">';
+    echo '<div><span>当前版本</span><strong>v' . esc_html(WPSTOW_VERSION) . '</strong></div>';
+    echo '<div><span>最新版本</span><strong>' . ($latestVersion !== '' ? 'v' . esc_html($latestVersion) : '待检查') . '</strong></div>';
+    echo '<div><span>更新渠道</span><strong>GitHub Release</strong></div>';
+    echo '</div>';
+    echo '<div class="wpstow-update-actions">';
+    echo '<a class="button button-primary" href="' . esc_url($checkUrl) . '"><i class="fas fa-sync-alt"></i> 检查更新</a>';
+    if ($available && $latestVersion !== '') {
+        echo '<a class="button wpstow-update-now" href="' . esc_url($upgradeUrl) . '"><i class="fas fa-arrow-circle-up"></i> 立即更新到 v' . esc_html($latestVersion) . '</a>';
+    }
+    echo '<a class="button" href="https://github.com/hicocos/wpstow/releases" target="_blank" rel="noopener noreferrer"><i class="fas fa-external-link-alt"></i> 发布记录</a>';
+    echo '</div>';
+    echo '<p class="wpstow-update-note">升级由 WordPress 原生更新程序执行。开始前建议备份网站文件和数据库，更新过程中不要关闭页面。</p>';
+    echo '</div>';
+}
+
 function wpstow_csf_button_field($id, $title, array $options, $default, $desc = '', $dependency = null)
 {
     $field = [
@@ -651,6 +710,14 @@ function wpstow_register_csf_options()
             wpstow_csf_button_field('log_enabled', '运行日志', ['no' => '关闭', 'yes' => '开启'], 'no', '默认关闭，需要排查问题时再开启。'),
             wpstow_csf_button_field('log_debug', '详细日志', ['no' => '关闭', 'yes' => '开启'], 'no', '排查完成后建议关闭。', ['log_enabled', '==', 'yes']),
             ['type' => 'callback', 'function' => 'wpstow_csf_render_diagnostics'],
+        ],
+    ]);
+
+    CSF::createSection($key, [
+        'title' => '主题更新',
+        'icon' => 'fas fa-cloud-download-alt',
+        'fields' => [
+            ['type' => 'callback', 'function' => 'wpstow_csf_render_update_panel', 'class' => 'wpstow-update-field'],
         ],
     ]);
 }

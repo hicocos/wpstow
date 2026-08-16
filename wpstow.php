@@ -3,9 +3,10 @@
 /**
  * Plugin Name: WPStow
  * Plugin URI: https://github.com/hicocos/wpstow
+ * Update URI: https://github.com/hicocos/wpstow
  * Description: 将 WordPress 媒体上传至云端存储（支持聚合图床/OneImg/S3/R2/WebDAV/FTP）
- * Version: 2.0.0
- * Author: MoePick
+ * Version: 2.0.1
+ * Author: 梅零落
  * Author URI: https://moepick.com/
  * Requires PHP: 7.4
  * Text Domain: wpstow
@@ -15,7 +16,7 @@
 
 if (!defined('ABSPATH')) exit;
 
-define('WPSTOW_VERSION', '2.0.0');
+define('WPSTOW_VERSION', '2.0.1');
 define('WPSTOW_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('WPSTOW_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -359,9 +360,8 @@ add_action('admin_enqueue_scripts', function ($hook) {
 require 'src/admin-csf.php';
 require 'src/hooks.php';
 
-if (is_admin()) {
-    new Update(__FILE__);
-}
+// Register outside is_admin() so scheduled WordPress update checks can see it.
+new Update(__FILE__);
 
 add_action('wp_ajax_wpstow_debug_upload', 'wpstow_debug_upload');
 function wpstow_debug_upload() {
