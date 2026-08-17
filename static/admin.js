@@ -224,22 +224,6 @@
         });
     }
 
-    function maybeAutoLoadSuperbedFolders() {
-        var $button = $('#wpstow-load-superbed-folders');
-        var hasApiKey = String(value('superbed_api_key_input')).trim()
-            || String($button.attr('data-has-saved-key') || '') === '1';
-
-        if (
-            $button.length
-            && !$button.prop('disabled')
-            && value('provider_config_type') === 'superbed'
-            && String(value('superbed_endpoint')).trim()
-            && hasApiKey
-        ) {
-            $button.trigger('click');
-        }
-    }
-
     function setManualSuperbedFolder() {
         var folderId = String($(this).val() || '').trim();
         var $select = field('superbed_folder_id');
@@ -873,7 +857,6 @@
     $(document)
         .on('click', '#wpstow-test-connection', testConnection)
         .on('click', '#wpstow-load-superbed-folders', loadSuperbedFolders)
-        .on('change', '[data-depend-id="provider_config_type"], [data-depend-id="superbed_api_key_input"]', maybeAutoLoadSuperbedFolders)
         .on('input change', '#wpstow-superbed-folder-manual-input', setManualSuperbedFolder)
         .on('change', '[data-depend-id="superbed_folder_id"]', syncManualSuperbedFolder)
         .on('click', '.wpstow-debug-upload-trigger', debugUpload)
@@ -904,7 +887,6 @@
             syncImageOptions();
             updateNamingPreview();
             pollQueueStatus();
-            maybeAutoLoadSuperbedFolders();
         }, 0);
     });
 })(jQuery, window);

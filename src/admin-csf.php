@@ -484,10 +484,10 @@ function wpstow_register_csf_options()
         $superbedFolderOptions[$savedSuperbedFolderId] = '已保存的目录';
     }
     $superbedFolderDescription = '<div class="wpstow-superbed-folder-tools">'
-        . '<button type="button" class="button" id="wpstow-load-superbed-folders" data-has-saved-key="' . ($hasSuperbedApiKey ? '1' : '0') . '"><i class="fa fa-refresh" aria-hidden="true"></i> 自动获取目录</button>'
+        . '<button type="button" class="button" id="wpstow-load-superbed-folders"><i class="fa fa-refresh" aria-hidden="true"></i> 获取目录</button>'
         . '<span id="wpstow-superbed-folder-result" role="status" aria-live="polite"></span>'
         . '</div>'
-        . '<p>填写 API Key 后自动读取目录名称，无需查找 UUID；留在根目录会直接上传到顶层。</p>'
+        . '<p>填写 API Key 后点击“获取目录”，即可按名称选择目录，无需查找 UUID；留在根目录会直接上传到顶层。</p>'
         . '<details class="wpstow-superbed-folder-manual"><summary>高级：手动填写目录 UUID</summary>'
         . '<input type="text" id="wpstow-superbed-folder-manual-input" value="' . esc_attr($savedSuperbedFolderId) . '" autocomplete="off" placeholder="目录 UUID">'
         . '</details>';
@@ -647,9 +647,9 @@ function wpstow_register_csf_options()
             ['type' => 'callback', 'title' => '验证连接', 'function' => 'wpstow_csf_render_connection_test', 'class' => 'wpstow-connection-test'],
             ['type' => 'subheading', 'content' => '<span class="wpstow-step-title"><b>3</b> 启用与访问方式</span><small>建议首次使用保留本地副本，确认运行稳定后再按需调整。</small>', 'class' => 'wpstow-step-heading'],
             wpstow_csf_button_field('switch', '自动转存新媒体', ['enable' => '开启', 'disable' => '关闭'], 'disable', '开启后，新上传媒体会按照上方分类路由发送到对应存储。'),
-            wpstow_csf_button_field('keep_local', '本地副本', ['yes' => '保留（推荐）', 'no' => '上传后删除'], 'yes', '保留副本便于故障回退、迁移和重新处理；关闭前请确认远端存储可靠。'),
-            wpstow_csf_button_field('media_url_mode', '媒体访问地址', ['cloud' => '云端优先', 'local' => '本站优先'], 'cloud', '决定页面优先使用哪个地址，不会迁移或删除已有文件。', ['keep_local', '==', 'yes']),
-            wpstow_csf_button_field('cloud_fallback_local', '云端读取失败时', ['yes' => '使用本地副本', 'no' => '不回退'], 'yes', '仅代理读取可自动判断故障；浏览器直连公开 CDN 时无法自动感知。', ['keep_local|media_url_mode', '==|==', 'yes|cloud']),
+            wpstow_csf_button_field('keep_local', '本地副本', ['yes' => '保留（推荐）', 'no' => '上传后删除'], 'yes', '仅控制之后成功转存的文件；关闭不会删除已有本地副本。'),
+            wpstow_csf_button_field('media_url_mode', '媒体访问地址', ['cloud' => '云端优先', 'local' => '本站优先'], 'cloud', '对每个附件分别判断：本站优先时，有本地文件则使用本站地址，没有则继续使用云端地址。不会迁移或删除文件。'),
+            wpstow_csf_button_field('cloud_fallback_local', '云端读取失败时', ['yes' => '使用本地副本', 'no' => '不回退'], 'yes', '仅在云端优先且通过代理读取时生效；有本地副本才会回退。浏览器直连公开 CDN 时无法自动感知。', ['media_url_mode', '==', 'cloud']),
         ],
     ]);
 

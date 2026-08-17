@@ -4,7 +4,7 @@ Tags: media, superbed, oneimg, s3, cloudflare-r2, webdav, ftp, image-optimizatio
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 2.0.3
+Stable tag: 2.0.4
 License: MIT
 License URI: https://opensource.org/license/mit/
 
@@ -78,6 +78,11 @@ WPStow 会把媒体文件发送到管理员配置的存储服务。存储凭据�
 * 生产环境应限制插件日志目录的 Web 访问并定期轮换云存储凭据。
 
 == Changelog ==
+
+= 2.0.4 =
+* 修复关闭“保留本地副本”后无法配置媒体访问地址和云端读取失败回退的问题，历史本地副本仍可按附件实际状态使用。
+* 明确“本地副本”只影响之后成功转存的文件，不会删除已有本地副本。
+* 聚合图床目录改为点击“获取目录”后手动读取，不再在页面加载或修改 API Key 时自动请求。
 
 = 2.0.3 =
 * 图片处理移除旧压缩功能，新增可调质量的 WebP 格式转换。
