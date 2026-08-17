@@ -181,13 +181,10 @@
             $select.append($('<option>', {value: currentValue, text: '手动指定的目录'}));
         }
 
-        var detectedIds = Object.keys(available);
-        var nextValue = currentValue;
-        if (!nextValue && detectedIds.length === 1) {
-            nextValue = detectedIds[0];
-        }
-        $select.val(nextValue).trigger('change');
-        $('#wpstow-superbed-folder-manual-input').val(nextValue);
+        // Loading remote options is not a user edit. Preserve the saved value
+        // without firing CSF's delegated change handler and dirty-state warning.
+        $select.val(currentValue);
+        $('#wpstow-superbed-folder-manual-input').val(currentValue);
     }
 
     function loadSuperbedFolders(event) {
