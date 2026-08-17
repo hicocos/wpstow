@@ -147,6 +147,67 @@ class SuperbedStorage extends StorageInterface
         ];
     }
 
+    private static function flattenFolderTree(array $folders, $parentPath = '', $depth = 0, array &$seen = [])
+    {
+        if ($depth > 20) {
+            return [];
+        }
+
+        $result = [];
+        foreach ($folders as $folder) {
+            if (!is_array($folder)) {
+                continue;
+            }
+
+            $id = sanitize_text_field((string) ($folder['id'] ?? ''));
+            if ($id === '' || isset($seen[$id])) {
+                continue;
+            }
+            $seen[$id] = true;
+
+            $name = sanitize_text_field((string) ($folder['name'] ?? ''));
+            if ($name === '') {
+                $name = '未命名目录';
+            }
+            $path = $parentPath === '' ? $name : $parentPath . ' / ' . $name;
+            $result[] = [
+                'id' => $id,
+                'name' => $name,
+                'path' => $path,
+            ];
+
+            if (!empty($folder['children']) && is_array($folder['children'])) {
+                $result = array_merge(
+                    $result,
+                    self::flattenFolderTree($folder['children'], $path, $depth + 1, $seen)
+                );
+            }
+        }
+
+        return $result;
+    }
+
+    public static function listFolders()
+    {
+        $result = self::apiRequest('GET', 'api/v1/folders/?tree=true');
+        if (empty($result['status'])) {
+            return ['status' => false, 'message' => '获取聚合图床目录失败: ' . ($result['message'] ?? '未知错误')];
+        }
+
+        $payload = $result['data'] ?? [];
+        if (!isset($payload['folders']) || !is_array($payload['folders'])) {
+            return ['status' => false, 'message' => '聚合图床鉴权成功，但目录列表响应格式异常'];
+        }
+
+        $seen = [];
+        $folders = self::flattenFolderTree($payload['folders'], '', 0, $seen);
+        return [
+            'status' => true,
+            'message' => $folders ? '已检测到 ' . count($folders) . ' 个目录' : '未检测到自定义目录，将使用根目录',
+            'folders' => $folders,
+        ];
+    }
+
     public static function upload($filepath, $cloudKey = null)
     {
         $config = self::getConfig();
@@ -292,16 +353,28 @@ class SuperbedStorage extends StorageInterface
 
     public static function testConnection()
     {
-        $result = self::apiRequest('GET', 'api/v1/entries/?limit=1');
+        $result = self::listFolders();
         if (empty($result['status'])) {
             return ['status' => false, 'message' => '聚合图床连接失败: ' . ($result['message'] ?? '未知错误')];
         }
 
-        $payload = $result['data'] ?? [];
-        if (!isset($payload['entries']) || !is_array($payload['entries'])) {
-            return ['status' => false, 'message' => '聚合图床鉴权成功，但文件列表响应格式异常'];
+        $folderId = self::getConfig()['folder_id'];
+        if ($folderId !== '') {
+            $folderIds = array_column($result['folders'], 'id');
+            if (!in_array($folderId, $folderIds, true)) {
+                return [
+                    'status' => false,
+                    'message' => '聚合图床 API 鉴权成功，但已选上传目录不存在或无权访问',
+                    'folders' => $result['folders'],
+                ];
+            }
         }
-        return ['status' => true, 'message' => '聚合图床 API 鉴权成功'];
+
+        return [
+            'status' => true,
+            'message' => '聚合图床 API 鉴权成功；' . $result['message'],
+            'folders' => $result['folders'],
+        ];
     }
 
     public static function getCloudUrl($key)

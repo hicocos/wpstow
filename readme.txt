@@ -4,7 +4,7 @@ Tags: media, superbed, oneimg, s3, cloudflare-r2, webdav, ftp, image-optimizatio
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 2.0.2
+Stable tag: 2.0.3
 License: MIT
 License URI: https://opensource.org/license/mit/
 
@@ -26,7 +26,7 @@ WPStow 支持 S3/R2 浏览器直传；需要服务器处理或直传失败时，
 * WebDAV、FTP/FTPS
 * 图片、视频、音频和其他附件可分别选择存储源或仅保留本地
 * R2 私有桶通过固定媒体 URL 302 到短期预签名地址，文件内容不经过 WordPress/PHP
-* 图片外链本地化、压缩、文字/图片水印
+* 图片外链本地化、统一转换 WebP（质量可调）、文字/图片水印
 * FFmpeg 视频压缩、分辨率限制和视频水印
 * 媒体库 URL、缩略图、srcset、REST 与编辑器适配
 * 可选原图单文件模式，禁止生成缩略图、缩放图和自动格式转换副本
@@ -47,7 +47,7 @@ WPStow 支持 S3/R2 浏览器直传；需要服务器处理或直传失败时，
 7. 将“自动转存新上传”设为“启用”，保存设置。
 8. 上传测试文件，确认媒体 URL 和云端对象。
 
-S3/R2 直传还需要在 Bucket CORS 中允许本站 Origin 使用 PUT，并在 ExposeHeaders 中加入 ETag。本地副本选择“上传后删除”，且媒体不需要缩略图、压缩或水印时自动启用直传。
+S3/R2 直传还需要在 Bucket CORS 中允许本站 Origin 使用 PUT，并在 ExposeHeaders 中加入 ETag。本地副本选择“上传后删除”，且媒体不需要缩略图、WebP 转换或水印时自动启用直传。
 
 == Frequently Asked Questions ==
 
@@ -83,6 +83,13 @@ WPStow 会把媒体文件发送到管理员配置的存储服务。存储凭据�
 * 生产环境应限制插件日志目录的 Web 访问并定期轮换云存储凭据。
 
 == Changelog ==
+
+= 2.0.3 =
+* 图片处理移除旧压缩功能，新增可调质量的 WebP 格式转换。
+* GIF、SVG 和转换失败的图片自动保留原格式，避免动画、矢量内容或上传流程受损。
+* 聚合图床新增目录自动检测与选择，同时保留手动填写目录 UUID 的高级入口。
+* 聚合图床 API 文档旁新增官方网站链接。
+* 优化插件更新面板，支持在设置页异步检查并直接发起升级。
 
 = 2.0.2 =
 * 作者名称改为纯文本“梅零落”，不再附加网站跳转链接。

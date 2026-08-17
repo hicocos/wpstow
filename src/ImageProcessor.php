@@ -51,7 +51,7 @@ class ImageProcessor
     }
 
     /**
-     * 处理图片（压缩和水印）
+     * 处理图片（水印后按需转换为 WebP）。
      */
     public static function process($filepath, $attachment_id = null)
     {
@@ -67,139 +67,121 @@ class ImageProcessor
             return $filepath;
         }
 
-        $processed = false;
-        $currentFile = $filepath;
-
-        // 图片压缩
-        if (MediaHandler::config('image_compress') === 'yes') {
-            $compressedFile = self::compress($currentFile);
-            if ($compressedFile && $compressedFile !== $currentFile) {
-                $currentFile = $compressedFile;
-                $processed = true;
-                Utils::writeLog('ImageProcessor: 压缩完成');
-            }
-        }
-
         // 添加水印
         if (MediaHandler::config('image_watermark') === 'yes') {
-            $watermarkedFile = self::addWatermark($currentFile);
-            if ($watermarkedFile && $watermarkedFile !== $currentFile) {
-                // 如果压缩产生了新文件，删除压缩后的临时文件
-                if ($processed && $currentFile !== $filepath) {
-                    @unlink($currentFile);
-                }
-                $currentFile = $watermarkedFile;
-                $processed = true;
-                Utils::writeLog('ImageProcessor: 水印添加完成');
-            }
+            self::addWatermark($filepath);
         }
 
-        // 如果处理产生了新文件，替换原文件
-        if ($processed && $currentFile !== $filepath) {
-            @rename($currentFile, $filepath);
-            return $filepath;
+        if (MediaHandler::config('image_format_conversion') === 'yes') {
+            self::convertToWebp($filepath);
         }
 
         return $filepath;
     }
 
     /**
-     * 压缩图片
+     * 将可安全解码的栅格图片转换为 WebP。失败时不触碰原文件。
      */
-    public static function compress($filepath)
+    private static function convertToWebp($filepath)
     {
-        if (!function_exists('imagecreatefromjpeg')) {
-            Utils::writeLog('ImageProcessor: GD 库未安装，无法压缩');
-            return $filepath;
+        $sourceMime = strtolower((string) self::getMimeType($filepath));
+        if ($sourceMime === 'image/webp') {
+            return true;
         }
 
-        $quality = intval(MediaHandler::config('image_compress_quality') ?: 80);
+        $convertibleMimes = [
+            'image/jpeg',
+            'image/png',
+            'image/bmp',
+            'image/x-ms-bmp',
+            'image/tiff',
+            'image/avif',
+            'image/heic',
+            'image/heif',
+        ];
+        if (!in_array($sourceMime, $convertibleMimes, true)) {
+            if (in_array($sourceMime, ['image/gif', 'image/svg+xml'], true)) {
+                Utils::writeLog('ImageProcessor: ' . $sourceMime . ' 使用兼容兜底，保留原格式');
+            } else {
+                Utils::writeLog('ImageProcessor: 当前图片格式不支持安全转换，保留原格式: ' . $sourceMime);
+            }
+            return false;
+        }
+
+        if (!function_exists('wp_get_image_editor')) {
+            Utils::writeLog('ImageProcessor: WordPress 图像编辑器不可用，保留原格式');
+            return false;
+        }
+
+        $editor = wp_get_image_editor($filepath);
+        if (is_wp_error($editor)) {
+            Utils::writeLog('ImageProcessor: 无法解码图片，保留原格式: ' . $editor->get_error_message());
+            return false;
+        }
+
+        if (method_exists($editor, 'maybe_exif_rotate')) {
+            $rotated = $editor->maybe_exif_rotate();
+            if (is_wp_error($rotated)) {
+                Utils::writeLog('ImageProcessor: EXIF 方向校正失败，保留原格式: ' . $rotated->get_error_message());
+                return false;
+            }
+        }
+
+        $quality = (int) (MediaHandler::config('image_webp_quality') ?: 82);
         $quality = max(10, min(100, $quality));
-
-        $mime = self::getMimeType($filepath);
-        $info = getimagesize($filepath);
-        if (!$info) {
-            return $filepath;
+        $qualityResult = $editor->set_quality($quality);
+        if (is_wp_error($qualityResult)) {
+            Utils::writeLog('ImageProcessor: 无法设置 WebP 质量，保留原格式: ' . $qualityResult->get_error_message());
+            return false;
         }
 
-        $width = $info[0];
-        $height = $info[1];
-        $type = $info[2];
-
-        // 创建图像资源
-        switch ($type) {
-            case IMAGETYPE_JPEG:
-                $image = @imagecreatefromjpeg($filepath);
-                break;
-            case IMAGETYPE_PNG:
-                $image = @imagecreatefrompng($filepath);
-                break;
-            case IMAGETYPE_GIF:
-                // GD 会丢弃 GIF 动画帧，保持原文件不变。
-                return $filepath;
-            case IMAGETYPE_WEBP:
-                if (function_exists('imagecreatefromwebp')) {
-                    $image = @imagecreatefromwebp($filepath);
-                } else {
-                    return $filepath;
-                }
-                break;
-            default:
-                return $filepath;
+        try {
+            $suffix = function_exists('wp_generate_uuid4') ? wp_generate_uuid4() : uniqid('', true);
+        } catch (\Throwable $e) {
+            $suffix = uniqid('', true);
+        }
+        $target = trailingslashit(dirname($filepath)) . '.wpstow-webp-' . sanitize_file_name($suffix) . '.webp';
+        $saved = $editor->save($target, 'image/webp');
+        if (is_wp_error($saved) || empty($saved['path'])) {
+            $message = is_wp_error($saved) ? $saved->get_error_message() : '未生成输出文件';
+            Utils::writeLog('ImageProcessor: WebP 转换失败，保留原格式: ' . $message);
+            @unlink($target);
+            return false;
         }
 
-        if (!$image) {
-            Utils::writeLog('ImageProcessor: 无法创建图像资源');
-            return $filepath;
+        $output = (string) $saved['path'];
+        if (wp_normalize_path($output) !== wp_normalize_path($target)) {
+            Utils::writeLog('ImageProcessor: WebP 编辑器返回了非预期输出路径，保留原格式');
+            if (wp_normalize_path(dirname($output)) === wp_normalize_path(dirname($target))) {
+                @unlink($output);
+            }
+            @unlink($target);
+            return false;
+        }
+        if (strtolower((string) self::getMimeType($output)) !== 'image/webp') {
+            Utils::writeLog('ImageProcessor: WebP 输出校验失败，保留原格式');
+            @unlink($output);
+            if ($output !== $target) {
+                @unlink($target);
+            }
+            return false;
         }
 
-        // 保留 PNG/WebP 的透明度
-        $newImage = imagecreatetruecolor($width, $height);
-        if ($type === IMAGETYPE_PNG || $type === IMAGETYPE_WEBP) {
-            imagealphablending($newImage, false);
-            imagesavealpha($newImage, true);
-            $transparent = imagecolorallocatealpha($newImage, 255, 255, 255, 127);
-            imagefilledrectangle($newImage, 0, 0, $width, $height, $transparent);
+        unset($editor);
+        if (!self::replaceFile($output, $filepath)) {
+            Utils::writeLog('ImageProcessor: 无法替换为 WebP 文件，保留原格式');
+            @unlink($output);
+            if ($output !== $target) {
+                @unlink($target);
+            }
+            return false;
         }
 
-        imagecopy($newImage, $image, 0, 0, 0, 0, $width, $height);
-        imagedestroy($image);
-
-        // 先写入同目录临时文件，编码完整成功后再替换原图。
-        $tempFile = tempnam(dirname($filepath), '.wpstow-image-');
-        if ($tempFile === false) {
-            imagedestroy($newImage);
-            return $filepath;
+        if ($output !== $target) {
+            @unlink($target);
         }
-        $result = false;
-        switch ($type) {
-            case IMAGETYPE_JPEG:
-                $result = imagejpeg($newImage, $tempFile, $quality);
-                break;
-            case IMAGETYPE_PNG:
-                // PNG 质量范围是 0-9，9 是最小压缩
-                $pngQuality = (int) round((100 - $quality) / 100 * 9);
-                $result = imagepng($newImage, $tempFile, $pngQuality);
-                break;
-            case IMAGETYPE_GIF:
-                $result = imagegif($newImage, $tempFile);
-                break;
-            case IMAGETYPE_WEBP:
-                if (function_exists('imagewebp')) {
-                    $result = imagewebp($newImage, $tempFile, $quality);
-                }
-                break;
-        }
-
-        imagedestroy($newImage);
-
-        if ($result && self::replaceFile($tempFile, $filepath)) {
-            Utils::writeLog("ImageProcessor: 压缩成功，质量={$quality}");
-            return $filepath;
-        }
-
-        @unlink($tempFile);
-        return $filepath;
+        Utils::writeLog('ImageProcessor: 已转换为 WebP，质量=' . $quality . '，来源=' . $sourceMime);
+        return true;
     }
 
     /**
@@ -526,8 +508,7 @@ class ImageProcessor
     }
 
     /**
-     * 处理上传前的图片（压缩和水印）
-     * 这个方法在 wp_handle_upload_prefilter 钩子中被调用
+     * 在 WordPress 移动上传文件前处理图片，并同步文件名、MIME 与大小。
      */
     public static function handleUploadPrefilter($file)
     {
@@ -543,7 +524,7 @@ class ImageProcessor
 
         Utils::writeLog('ImageProcessor: handleUploadPrefilter 处理 ' . $file['name']);
 
-        // 处理图片（压缩和水印）
+        // 先处理文件内容，再根据真实输出类型更新 WordPress 接收的信息。
         $processedFile = self::process($file['tmp_name']);
 
         // 如果处理成功，更新文件信息
@@ -552,6 +533,12 @@ class ImageProcessor
             // 更新文件大小
             if (isset($file['size'])) {
                 $file['size'] = filesize($processedFile);
+            }
+            $actualMime = strtolower((string) self::getMimeType($processedFile));
+            if (MediaHandler::config('image_format_conversion') === 'yes' && $actualMime === 'image/webp') {
+                $stem = pathinfo((string) $file['name'], PATHINFO_FILENAME);
+                $file['name'] = ($stem !== '' ? $stem : 'image') . '.webp';
+                $file['type'] = 'image/webp';
             }
         }
 

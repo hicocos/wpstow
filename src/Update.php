@@ -26,6 +26,7 @@ class Update
             add_filter('plugin_action_links_' . $this->plugin_slug, [$this, 'action_links']);
             add_filter('plugin_row_meta', [$this, 'row_meta'], 10, 4);
             add_action('admin_post_wpstow_check_updates', [$this, 'handle_manual_check']);
+            add_action('wp_ajax_wpstow_check_updates_ajax', [$this, 'handle_ajax_check']);
             add_action('admin_notices', [$this, 'manual_check_notice']);
         }
     }
@@ -116,15 +117,9 @@ class Update
 
         check_admin_referer('wpstow_check_updates');
 
-        $update = $this->get_update(false, [], $this->plugin_slug, []);
-        $status = 'failed';
-        $version = '';
-
-        if (is_array($update) && !empty($update['version'])) {
-            $version = sanitize_text_field($update['version']);
-            $status = version_compare($version, WPSTOW_VERSION, '>') ? 'available' : 'current';
-            $this->store_update_result($update, $status === 'available');
-        }
+        $result = $this->check_now();
+        $status = $result['status'];
+        $version = $result['version'];
 
         $return_to = isset($_GET['return_to']) ? sanitize_key(wp_unslash($_GET['return_to'])) : '';
         $redirect_base = $return_to === 'settings'
@@ -138,10 +133,60 @@ class Update
             $redirect_base
         );
         if ($return_to === 'settings') {
-            $redirect .= '#tab=' . rawurlencode('主题更新');
+            $redirect .= '#tab=' . rawurlencode('插件更新');
         }
         wp_safe_redirect($redirect);
         exit;
+    }
+
+    public function handle_ajax_check()
+    {
+        if (!current_user_can('update_plugins')) {
+            wp_send_json_error(['message' => '您没有检查插件更新的权限。'], 403);
+        }
+
+        check_ajax_referer('wpstow_admin', 'nonce');
+
+        $result = $this->check_now();
+        if ($result['status'] === 'failed') {
+            wp_send_json_error([
+                'status' => 'failed',
+                'message' => '更新检查失败，请确认服务器可以访问 GitHub 后重试。',
+            ], 502);
+        }
+
+        $upgradeUrl = '';
+        if ($result['status'] === 'available') {
+            $upgradeUrl = wp_nonce_url(
+                self_admin_url('update.php?action=upgrade-plugin&plugin=' . rawurlencode($this->plugin_slug)),
+                'upgrade-plugin_' . $this->plugin_slug
+            );
+        }
+
+        wp_send_json_success([
+            'status' => $result['status'],
+            'currentVersion' => WPSTOW_VERSION,
+            'latestVersion' => $result['version'],
+            'upgradeUrl' => $upgradeUrl,
+        ]);
+    }
+
+    private function check_now()
+    {
+        $update = $this->get_update(false, [], $this->plugin_slug, []);
+        $status = 'failed';
+        $version = '';
+
+        if (is_array($update) && !empty($update['version'])) {
+            $version = sanitize_text_field($update['version']);
+            $status = version_compare($version, WPSTOW_VERSION, '>') ? 'available' : 'current';
+            $this->store_update_result($update, $status === 'available');
+        }
+
+        return [
+            'status' => $status,
+            'version' => $version,
+        ];
     }
 
     private function store_update_result(array $update, $is_available)
@@ -190,6 +235,10 @@ class Update
     public function manual_check_notice()
     {
         if (!current_user_can('update_plugins') || empty($_GET['wpstow_update_check'])) {
+            return;
+        }
+
+        if (isset($_GET['page']) && sanitize_key(wp_unslash($_GET['page'])) === 'wpstow_settings') {
             return;
         }
 

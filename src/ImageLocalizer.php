@@ -263,6 +263,32 @@ class ImageLocalizer
             return null;
         }
 
+        ImageProcessor::process($savePath);
+        $processedInfo = @getimagesize($savePath);
+        $processedMime = is_array($processedInfo) ? strtolower((string) ($processedInfo['mime'] ?? '')) : '';
+        if ($processedMime === '') {
+            Utils::writeLog('本地化图片处理后无法识别格式，已拒绝入库');
+            @unlink($savePath);
+            return null;
+        }
+
+        if ($processedMime === 'image/webp' && $ext !== 'webp') {
+            $webpName = wp_unique_filename(
+                $uploadDir['path'],
+                pathinfo($filename, PATHINFO_FILENAME) . '.webp'
+            );
+            $webpPath = $uploadDir['path'] . '/' . $webpName;
+            if (!@rename($savePath, $webpPath)) {
+                Utils::writeLog('本地化图片已转为 WebP，但无法更新文件扩展名');
+                @unlink($savePath);
+                return null;
+            }
+            $filename = $webpName;
+            $savePath = $webpPath;
+            $ext = 'webp';
+        }
+        $mimeType = $processedMime;
+
         $attachment = [
             'guid' => $uploadDir['url'] . '/' . $filename,
             'post_mime_type' => $mimeType,

@@ -158,10 +158,10 @@ class MediaHandler extends Plugin
                 return $instance->localize_images;
             case 'disable_image_subsizes':
                 return $instance->disable_image_subsizes;
-            case 'image_compress':
-                return $instance->image_compress;
-            case 'image_compress_quality':
-                return $instance->image_compress_quality;
+            case 'image_format_conversion':
+                return $instance->image_format_conversion;
+            case 'image_webp_quality':
+                return $instance->image_webp_quality;
             case 'image_watermark':
                 return $instance->image_watermark;
             case 'watermark_type':
@@ -689,12 +689,12 @@ class MediaHandler extends Plugin
 
         Utils::writeLog('检查主文件, meta[file]=' . ($meta['file'] ?? 'null'));
 
-        // 判断是否需要检查保留原文件（仅在图片或视频水印/压缩启用时）
-        $imageCompressEnabled = self::config('image_compress') === 'yes';
+        // 仅在图片/视频处理启用时检查是否保留原文件。
+        $imageConversionEnabled = self::config('image_format_conversion') === 'yes';
         $imageWatermarkEnabled = self::config('image_watermark') === 'yes';
         $videoCompressEnabled = self::config('video_compress') === 'yes';
         $videoWatermarkEnabled = self::config('video_watermark') === 'yes';
-        $needCheckKeepOriginal = $imageCompressEnabled || $imageWatermarkEnabled || $videoCompressEnabled || $videoWatermarkEnabled;
+        $needCheckKeepOriginal = $imageConversionEnabled || $imageWatermarkEnabled || $videoCompressEnabled || $videoWatermarkEnabled;
         $keepOriginal = !$needCheckKeepOriginal || self::config('keep_original') !== 'no';
 
         if (!empty($meta['file'])) {
@@ -1142,6 +1142,30 @@ class MediaHandler extends Plugin
             $result = ['status' => false, 'message' => '未知存储类型'];
         }
 
+        wp_send_json($result);
+    }
+
+    public static function get_superbed_folders()
+    {
+        check_ajax_referer('wpstow_admin', 'nonce');
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => '权限不足']);
+        }
+
+        $stored = get_option('wpstow_setting');
+        $candidate = is_array($stored) ? $stored : @unserialize($stored, ['allowed_classes' => false]);
+        if (!is_array($candidate)) {
+            $candidate = [];
+        }
+
+        $candidate['superbed_endpoint'] = esc_url_raw(wp_unslash($_POST['superbed_endpoint'] ?? ''), ['http', 'https']);
+        $candidate['superbed_api_key'] = trim((string) wp_unslash($_POST['superbed_api_key'] ?? '')) !== ''
+            ? Utils::sanitizeSecret(wp_unslash($_POST['superbed_api_key']))
+            : ($candidate['superbed_api_key'] ?? '');
+
+        $result = self::withRuntimeConfig($candidate, function () {
+            return SuperbedStorage::listFolders();
+        });
         wp_send_json($result);
     }
 

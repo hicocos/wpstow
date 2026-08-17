@@ -132,8 +132,15 @@
 
         $.post(ajaxUrl, connectionData(), function (response) {
             if (response && response.status) {
+                if (storageType === 'superbed' && Array.isArray(response.folders)) {
+                    populateSuperbedFolders(response.folders);
+                    setSuperbedFolderResult(response.message || '', 'is-success');
+                }
                 setResult($result, '连接成功：' + messageFrom(response, '存储后端响应正常'), 'is-success');
             } else {
+                if (storageType === 'superbed' && response && Array.isArray(response.folders)) {
+                    populateSuperbedFolders(response.folders);
+                }
                 setResult($result, '连接失败：' + messageFrom(response, '请检查配置'), 'is-error');
             }
         }).fail(function (xhr) {
@@ -141,6 +148,121 @@
         }).always(function () {
             $button.prop('disabled', false).removeAttr('aria-busy');
         });
+    }
+
+    function setSuperbedFolderResult(message, state) {
+        $('#wpstow-superbed-folder-result')
+            .removeClass('is-success is-error is-loading')
+            .addClass(state || '')
+            .text(message || '');
+    }
+
+    function populateSuperbedFolders(folders) {
+        var $select = field('superbed_folder_id');
+        if (!$select.length) {
+            return;
+        }
+
+        var currentValue = String($select.val() || '').trim();
+        var available = {};
+        $select.empty().append($('<option>', {value: '', text: '根目录（推荐）'}));
+
+        folders.forEach(function (folder) {
+            var id = String(folder && folder.id || '').trim();
+            var label = String(folder && (folder.path || folder.name) || '').trim();
+            if (!id || !label || available[id]) {
+                return;
+            }
+            available[id] = true;
+            $select.append($('<option>', {value: id, text: label}));
+        });
+
+        if (currentValue && !available[currentValue]) {
+            $select.append($('<option>', {value: currentValue, text: '手动指定的目录'}));
+        }
+
+        var detectedIds = Object.keys(available);
+        var nextValue = currentValue;
+        if (!nextValue && detectedIds.length === 1) {
+            nextValue = detectedIds[0];
+        }
+        $select.val(nextValue).trigger('change');
+        $('#wpstow-superbed-folder-manual-input').val(nextValue);
+    }
+
+    function loadSuperbedFolders(event) {
+        event.preventDefault();
+
+        var $button = $(event.currentTarget);
+        if ($button.prop('disabled')) {
+            return;
+        }
+        var endpoint = String(value('superbed_endpoint')).trim();
+        if (!endpoint) {
+            setSuperbedFolderResult('请先填写 API 地址', 'is-error');
+            return;
+        }
+
+        $button.prop('disabled', true).attr('aria-busy', 'true');
+        $button.find('i').attr('class', 'fa fa-spinner fa-spin');
+        setSuperbedFolderResult('正在读取目录…', 'is-loading');
+
+        $.post(ajaxUrl, {
+            action: 'wpstow_get_superbed_folders',
+            nonce: nonce,
+            superbed_endpoint: endpoint,
+            superbed_api_key: value('superbed_api_key_input')
+        }).done(function (response) {
+            if (response && response.status && Array.isArray(response.folders)) {
+                populateSuperbedFolders(response.folders);
+                setSuperbedFolderResult(response.message || '目录读取成功', 'is-success');
+                return;
+            }
+            setSuperbedFolderResult(messageFrom(response, '无法读取目录'), 'is-error');
+        }).fail(function (xhr) {
+            setSuperbedFolderResult(messageFrom(xhr.responseJSON, '目录请求失败，请检查服务器日志'), 'is-error');
+        }).always(function () {
+            $button.prop('disabled', false).removeAttr('aria-busy');
+            $button.find('i').attr('class', 'fa fa-refresh');
+        });
+    }
+
+    function maybeAutoLoadSuperbedFolders() {
+        var $button = $('#wpstow-load-superbed-folders');
+        var hasApiKey = String(value('superbed_api_key_input')).trim()
+            || String($button.attr('data-has-saved-key') || '') === '1';
+
+        if (
+            $button.length
+            && !$button.prop('disabled')
+            && value('provider_config_type') === 'superbed'
+            && String(value('superbed_endpoint')).trim()
+            && hasApiKey
+        ) {
+            $button.trigger('click');
+        }
+    }
+
+    function setManualSuperbedFolder() {
+        var folderId = String($(this).val() || '').trim();
+        var $select = field('superbed_folder_id');
+        if (!$select.length) {
+            return;
+        }
+
+        $select.find('option[data-manual="true"]').remove();
+        if (folderId && !$select.find('option').filter(function () { return this.value === folderId; }).length) {
+            $select.append($('<option>', {
+                value: folderId,
+                text: '手动指定的目录',
+                'data-manual': 'true'
+            }));
+        }
+        $select.val(folderId).trigger('change');
+    }
+
+    function syncManualSuperbedFolder() {
+        $('#wpstow-superbed-folder-manual-input').val(String($(this).val() || '').trim());
     }
 
     function debugUpload() {
@@ -567,12 +689,121 @@
     }
 
     function syncImageOptions() {
-        var hasProcessing = value('image_compress') === 'yes' || value('image_watermark') === 'yes';
+        var hasProcessing = value('image_format_conversion') === 'yes' || value('image_watermark') === 'yes';
         field('keep_original').closest('.csf-field').toggle(hasProcessing);
     }
 
     function clearConnectionResult() {
         setResult($('#wpstow-test-result'), '', '');
+    }
+
+    function renderUpdateStatus(status, data, errorMessage) {
+        var currentVersion = String(data.currentVersion || '').replace(/^v/i, '');
+        var latestVersion = String(data.latestVersion || '').replace(/^v/i, '');
+        var presentation;
+
+        if (status === 'available') {
+            presentation = {
+                className: 'is-update',
+                icon: 'fa fa-cloud-download',
+                label: '可更新',
+                title: '检测到 WPStow 新版本',
+                description: 'v' + latestVersion + ' 已发布，可以直接在线升级。',
+                result: '发现新版本 v' + latestVersion + '，可以使用下方按钮立即更新。'
+            };
+        } else if (status === 'current') {
+            presentation = {
+                className: 'is-current',
+                icon: 'fa fa-thumbs-o-up',
+                label: '最新版',
+                title: '当前插件已经是最新版',
+                description: '当前安装版本与 GitHub 最新稳定版一致。',
+                result: '暂无更新，您当前安装的 v' + currentVersion + ' 已是最新版。'
+            };
+        } else {
+            presentation = {
+                className: 'is-error',
+                icon: 'fa fa-exclamation-triangle',
+                label: '检查失败',
+                title: '暂时无法检查插件更新',
+                description: errorMessage || '服务器未能获取 GitHub Release，请检查网络后重试。',
+                result: errorMessage || '更新检查失败，请确认服务器可以访问 GitHub 后重新检测。'
+            };
+        }
+
+        var stateClasses = 'is-current is-update is-error is-unknown';
+        $('#wpstow-update-panel').removeClass(stateClasses).addClass(presentation.className);
+        $('#wpstow-update-heading-icon').attr('class', presentation.icon);
+        $('#wpstow-update-heading').text(presentation.title);
+        $('#wpstow-update-description').text(presentation.description);
+        $('#wpstow-update-state').removeClass(stateClasses).addClass(presentation.className);
+        $('#wpstow-update-state-label').text(presentation.label);
+        $('#wpstow-update-result').removeClass(stateClasses).addClass(presentation.className);
+        $('#wpstow-update-result-icon').attr('class', presentation.icon);
+        $('#wpstow-update-result-text').text(presentation.result);
+
+        if (latestVersion) {
+            $('#wpstow-update-latest').text('v' + latestVersion);
+        }
+
+        $('#wpstow-update-now').remove();
+        if (status === 'available' && data.upgradeUrl) {
+            var $upgrade = $('<a>', {
+                'class': 'button wpstow-update-now',
+                'id': 'wpstow-update-now',
+                'href': data.upgradeUrl
+            }).text('立即更新到 v' + latestVersion);
+            $upgrade.prepend($('<i>', {
+                'class': 'fa fa-arrow-circle-up',
+                'aria-hidden': 'true'
+            }));
+            $('#wpstow-check-updates').after($upgrade);
+        }
+    }
+
+    function resetUpdateCheckButton($button) {
+        $button.removeClass('is-loading')
+            .removeAttr('aria-busy')
+            .removeAttr('aria-disabled');
+        $button.find('i').attr('class', 'fa fa-refresh');
+        $button.find('.wpstow-update-button-label').text('检查更新');
+    }
+
+    function startUpdateCheck(event) {
+        event.preventDefault();
+
+        var $button = $(event.currentTarget);
+        if ($button.hasClass('is-loading')) {
+            return;
+        }
+
+        if (!ajaxUrl || !nonce) {
+            renderUpdateStatus('failed', {}, '更新检查配置不完整，请刷新后台后重试。');
+            return;
+        }
+
+        $button.addClass('is-loading')
+            .attr('aria-busy', 'true')
+            .attr('aria-disabled', 'true');
+        $button.find('i').attr('class', 'fa fa-spinner fa-spin');
+        $button.find('.wpstow-update-button-label').text('请稍候...');
+        $('#wpstow-update-progress').prop('hidden', false);
+
+        $.post(ajaxUrl, {
+            action: 'wpstow_check_updates_ajax',
+            nonce: nonce
+        }).done(function (response) {
+            if (response && response.success && response.data) {
+                renderUpdateStatus(response.data.status, response.data, '');
+                return;
+            }
+            renderUpdateStatus('failed', {}, messageFrom(response, '更新检查失败，请稍后重试。'));
+        }).fail(function (xhr) {
+            renderUpdateStatus('failed', {}, messageFrom(xhr.responseJSON, '请求失败，请检查服务器网络后重试。'));
+        }).always(function () {
+            $('#wpstow-update-progress').prop('hidden', true);
+            resetUpdateCheckButton($button);
+        });
     }
 
     function updateNamingPreview() {
@@ -644,11 +875,16 @@
 
     $(document)
         .on('click', '#wpstow-test-connection', testConnection)
+        .on('click', '#wpstow-load-superbed-folders', loadSuperbedFolders)
+        .on('change', '[data-depend-id="provider_config_type"], [data-depend-id="superbed_api_key_input"]', maybeAutoLoadSuperbedFolders)
+        .on('input change', '#wpstow-superbed-folder-manual-input', setManualSuperbedFolder)
+        .on('change', '[data-depend-id="superbed_folder_id"]', syncManualSuperbedFolder)
         .on('click', '.wpstow-debug-upload-trigger', debugUpload)
         .on('click', '#wpstow-clear-log', clearLog)
         .on('click', '#wpstow-library-scan', startLibraryScan)
         .on('click', '#wpstow-library-process', startLibraryProcess)
         .on('click', '#wpstow-library-stop', stopLibraryOperation)
+        .on('click', '#wpstow-check-updates', startUpdateCheck)
         .on('click', '#wpstow-queue-pause', function () { controlQueue('pause'); })
         .on('click', '#wpstow-queue-resume', function () { controlQueue('resume'); })
         .on('click', '#wpstow-queue-cancel', function () { controlQueue('cancel'); })
@@ -661,7 +897,7 @@
         })
         .on('change input', '[data-depend-id="provider_config_type"], [data-depend-id^="oneimg_"], [data-depend-id^="superbed_"], [data-depend-id^="s3_"], [data-depend-id^="r2_"], [data-depend-id^="webdav_"], [data-depend-id^="ftp_"]', clearConnectionResult)
         .on('change input', '[data-depend-id="filename_preset"], [data-depend-id="filename_template"]', updateNamingPreview)
-        .on('change', '[data-depend-id="image_compress"], [data-depend-id="image_watermark"]', syncImageOptions);
+        .on('change', '[data-depend-id="image_format_conversion"], [data-depend-id="image_watermark"]', syncImageOptions);
 
     $(function () {
         // This plugin can be enqueued before a theme-bundled CSF script. Run
@@ -671,6 +907,7 @@
             syncImageOptions();
             updateNamingPreview();
             pollQueueStatus();
+            maybeAutoLoadSuperbedFolders();
         }, 0);
     });
 })(jQuery, window);

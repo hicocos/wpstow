@@ -9,6 +9,7 @@ use WPStow\VideoProcessor;
 
 add_action('wp_ajax_wpstow_test_storage_connection', [MediaHandler::class, 'test_storage_connection']);
 add_action('wp_ajax_test_storage_connection', [MediaHandler::class, 'test_storage_connection']);
+add_action('wp_ajax_wpstow_get_superbed_folders', [MediaHandler::class, 'get_superbed_folders']);
 add_action('wp_ajax_wpstow_upload_one', [MediaHandler::class, 'replaced_one']);
 add_action('wp_ajax_wpstow_scan_media_library', [MediaLibraryManager::class, 'ajaxScan']);
 add_action('wp_ajax_wpstow_queue_start', [PersistentMediaQueue::class, 'ajaxStart']);
@@ -56,8 +57,9 @@ if (MediaHandler::config('switch') == 'enable') {
     add_filter('wp_generate_attachment_metadata', [MediaHandler::class, 'generate_attachment_metadata'], 10, 3);
     add_filter('wp_attachments_s3_url', [MediaHandler::class, 'filterAttachmentsUrl'], 10, 2);
 
-    // 图片压缩和水印处理（在生成缩略图之前）
+    // 图片格式转换和水印处理（在生成缩略图之前）
     add_filter('wp_handle_upload_prefilter', [ImageProcessor::class, 'handleUploadPrefilter'], 10, 1);
+    add_filter('wp_handle_sideload_prefilter', [ImageProcessor::class, 'handleUploadPrefilter'], 10, 1);
 
     // 视频压缩和水印处理
     add_filter('wp_handle_upload_prefilter', [VideoProcessor::class, 'handleUploadPrefilter'], 10, 1);

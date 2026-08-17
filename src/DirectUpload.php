@@ -340,7 +340,7 @@ class DirectUpload
         }
         if ($category === 'image') {
             return MediaHandler::config('disable_image_subsizes') === 'yes'
-                && MediaHandler::config('image_compress') !== 'yes'
+                && MediaHandler::config('image_format_conversion') !== 'yes'
                 && MediaHandler::config('image_watermark') !== 'yes';
         }
         if ($category === 'video') {

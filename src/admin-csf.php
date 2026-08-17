@@ -125,8 +125,8 @@ function wpstow_csf_normalize_settings($data)
 
     $normalized['localize_images'] = wpstow_csf_choice($data['localize_images'] ?? 'no', ['yes', 'no'], 'no');
     $normalized['disable_image_subsizes'] = wpstow_csf_choice($data['disable_image_subsizes'] ?? 'no', ['yes', 'no'], 'no');
-    $normalized['image_compress'] = wpstow_csf_choice($data['image_compress'] ?? 'no', ['yes', 'no'], 'no');
-    $normalized['image_compress_quality'] = min(100, max(10, (int) ($data['image_compress_quality'] ?? 80)));
+    $normalized['image_format_conversion'] = wpstow_csf_choice($data['image_format_conversion'] ?? 'no', ['yes', 'no'], 'no');
+    $normalized['image_webp_quality'] = min(100, max(10, (int) ($data['image_webp_quality'] ?? 82)));
     $normalized['image_watermark'] = wpstow_csf_choice($data['image_watermark'] ?? 'no', ['yes', 'no'], 'no');
     $normalized['watermark_type'] = wpstow_csf_choice($data['watermark_type'] ?? 'text', ['text', 'image'], 'text');
     $normalized['watermark_text'] = wpstow_csf_text($data['watermark_text'] ?? '');
@@ -148,6 +148,8 @@ function wpstow_csf_normalize_settings($data)
 
     unset(
         $normalized['oneimg_token_input'],
+        $normalized['image_compress'],
+        $normalized['image_compress_quality'],
         $normalized['superbed_api_key_input'],
         $normalized['s3_access_key_input'],
         $normalized['s3_secret_key_input'],
@@ -259,7 +261,6 @@ function wpstow_csf_render_status()
     $fallbackLocal = MediaHandler::config('cloud_fallback_local') !== 'no';
     $mediaUrlMode = MediaHandler::config('media_url_mode') === 'local' ? 'local' : 'cloud';
     $ffmpegAvailable = VideoProcessor::checkFFmpeg();
-
     $routes = [];
     $missingBackends = [];
     $activeBackends = [];
@@ -389,46 +390,73 @@ function wpstow_csf_render_update_panel()
     $latestVersion = is_object($knownUpdate)
         ? (string) ($knownUpdate->new_version ?? ($knownUpdate->version ?? ''))
         : '';
+    $manualStatus = isset($_GET['wpstow_update_check'])
+        ? sanitize_key(wp_unslash($_GET['wpstow_update_check']))
+        : '';
 
-    if ($available && $latestVersion !== '') {
+    if ($manualStatus === 'failed') {
+        $statusClass = 'is-error';
+        $statusIcon = 'fa fa-exclamation-triangle';
+        $statusLabel = '检查失败';
+        $statusTitle = '暂时无法检查插件更新';
+        $statusDesc = '服务器未能获取 GitHub Release，请检查网络后重试。';
+        $resultText = '更新检查失败，请确认服务器可以访问 GitHub 后重新检测。';
+    } elseif ($available && $latestVersion !== '') {
         $statusClass = 'is-update';
-        $statusLabel = '发现新版本';
+        $statusIcon = 'fa fa-cloud-download';
+        $statusLabel = '可更新';
+        $statusTitle = '检测到 WPStow 新版本';
         $statusDesc = 'v' . $latestVersion . ' 已发布，可以直接在线升级。';
+        $resultText = '发现新版本 v' . $latestVersion . '，可以使用下方按钮立即更新。';
     } elseif ($latestVersion !== '') {
         $statusClass = 'is-current';
-        $statusLabel = '已是最新版';
+        $statusIcon = 'fa fa-thumbs-o-up';
+        $statusLabel = '最新版';
+        $statusTitle = '当前插件已经是最新版';
         $statusDesc = '当前安装版本与 GitHub 最新稳定版一致。';
+        $resultText = '暂无更新，您当前安装的 v' . WPSTOW_VERSION . ' 已是最新版。';
     } else {
         $statusClass = 'is-unknown';
+        $statusIcon = 'fa fa-refresh';
         $statusLabel = '尚未检查';
+        $statusTitle = '尚未获取最新版本信息';
         $statusDesc = '点击下方按钮获取 GitHub 最新稳定版本。';
+        $resultText = '尚未检测更新，点击下方按钮获取最新版本信息。';
     }
 
-    $checkUrl = wp_nonce_url(
-        admin_url('admin-post.php?action=wpstow_check_updates&return_to=settings'),
-        'wpstow_check_updates'
-    );
     $upgradeUrl = wp_nonce_url(
         self_admin_url('update.php?action=upgrade-plugin&plugin=' . rawurlencode($pluginSlug)),
         'upgrade-plugin_' . $pluginSlug
     );
 
-    echo '<div class="wpstow-update-panel">';
+    echo '<div class="wpstow-update-panel ' . esc_attr($statusClass) . '" id="wpstow-update-panel">';
     echo '<div class="wpstow-update-head">';
-    echo '<div><span>WPStow 稳定版本</span><strong>在线更新</strong><small>' . esc_html($statusDesc) . '</small></div>';
-    echo '<span class="wpstow-update-state ' . esc_attr($statusClass) . '"><i></i>' . esc_html($statusLabel) . '</span>';
+    echo '<div class="wpstow-update-summary">';
+    echo '<span>WPStow 在线更新</span>';
+    echo '<strong><i class="' . esc_attr($statusIcon) . '" id="wpstow-update-heading-icon"></i><span id="wpstow-update-heading">' . esc_html($statusTitle) . '</span></strong>';
+    echo '<small id="wpstow-update-description">' . esc_html($statusDesc) . '</small>';
+    echo '</div>';
+    echo '<span class="wpstow-update-state ' . esc_attr($statusClass) . '" id="wpstow-update-state"><i></i><span id="wpstow-update-state-label">' . esc_html($statusLabel) . '</span></span>';
     echo '</div>';
     echo '<div class="wpstow-update-versions">';
     echo '<div><span>当前版本</span><strong>v' . esc_html(WPSTOW_VERSION) . '</strong></div>';
-    echo '<div><span>最新版本</span><strong>' . ($latestVersion !== '' ? 'v' . esc_html($latestVersion) : '待检查') . '</strong></div>';
+    echo '<div><span>最新版本</span><strong id="wpstow-update-latest">' . ($latestVersion !== '' ? 'v' . esc_html($latestVersion) : '待检查') . '</strong></div>';
     echo '<div><span>更新渠道</span><strong>GitHub Release</strong></div>';
     echo '</div>';
-    echo '<div class="wpstow-update-actions">';
-    echo '<a class="button button-primary" href="' . esc_url($checkUrl) . '"><i class="fas fa-sync-alt"></i> 检查更新</a>';
+    echo '<div class="wpstow-update-result ' . esc_attr($statusClass) . '" id="wpstow-update-result" role="status" aria-live="polite">';
+    echo '<i class="' . esc_attr($statusIcon) . '" id="wpstow-update-result-icon" aria-hidden="true"></i>';
+    echo '<span id="wpstow-update-result-text">' . esc_html($resultText) . '</span>';
+    echo '</div>';
+    echo '<div class="wpstow-update-progress" id="wpstow-update-progress" role="status" aria-live="polite" hidden>';
+    echo '<i class="fa fa-spinner fa-spin" aria-hidden="true"></i>';
+    echo '<span><strong>正在检查更新</strong><small>正在连接 GitHub，请稍候...</small></span>';
+    echo '</div>';
+    echo '<div class="wpstow-update-actions" id="wpstow-update-actions">';
+    echo '<button type="button" class="button button-primary" id="wpstow-check-updates"><i class="fa fa-refresh" aria-hidden="true"></i><span class="wpstow-update-button-label">检查更新</span></button>';
     if ($available && $latestVersion !== '') {
-        echo '<a class="button wpstow-update-now" href="' . esc_url($upgradeUrl) . '"><i class="fas fa-arrow-circle-up"></i> 立即更新到 v' . esc_html($latestVersion) . '</a>';
+        echo '<a class="button wpstow-update-now" id="wpstow-update-now" href="' . esc_url($upgradeUrl) . '"><i class="fa fa-arrow-circle-up" aria-hidden="true"></i>立即更新到 v' . esc_html($latestVersion) . '</a>';
     }
-    echo '<a class="button" href="https://github.com/hicocos/wpstow/releases" target="_blank" rel="noopener noreferrer"><i class="fas fa-external-link-alt"></i> 发布记录</a>';
+    echo '<a class="button" href="https://github.com/hicocos/wpstow/releases" target="_blank" rel="noopener noreferrer"><i class="fa fa-external-link" aria-hidden="true"></i>发布记录</a>';
     echo '</div>';
     echo '<p class="wpstow-update-note">升级由 WordPress 原生更新程序执行。开始前建议备份网站文件和数据库，更新过程中不要关闭页面。</p>';
     echo '</div>';
@@ -462,6 +490,19 @@ function wpstow_register_csf_options()
     $key = 'wpstow_setting';
     $hasOneImgToken = MediaHandler::rawSetting('oneimg_token', '') !== '';
     $hasSuperbedApiKey = MediaHandler::rawSetting('superbed_api_key', '') !== '';
+    $savedSuperbedFolderId = wpstow_csf_text(MediaHandler::rawSetting('superbed_folder_id', ''));
+    $superbedFolderOptions = ['' => '根目录（推荐）'];
+    if ($savedSuperbedFolderId !== '') {
+        $superbedFolderOptions[$savedSuperbedFolderId] = '已保存的目录';
+    }
+    $superbedFolderDescription = '<div class="wpstow-superbed-folder-tools">'
+        . '<button type="button" class="button" id="wpstow-load-superbed-folders" data-has-saved-key="' . ($hasSuperbedApiKey ? '1' : '0') . '"><i class="fa fa-refresh" aria-hidden="true"></i> 自动获取目录</button>'
+        . '<span id="wpstow-superbed-folder-result" role="status" aria-live="polite"></span>'
+        . '</div>'
+        . '<p>填写 API Key 后自动读取目录名称，无需查找 UUID；留在根目录会直接上传到顶层。</p>'
+        . '<details class="wpstow-superbed-folder-manual"><summary>高级：手动填写目录 UUID</summary>'
+        . '<input type="text" id="wpstow-superbed-folder-manual-input" value="' . esc_attr($savedSuperbedFolderId) . '" autocomplete="off" placeholder="目录 UUID">'
+        . '</details>';
     $hasS3AccessKey = MediaHandler::rawSetting('s3_access_key', '') !== '';
     $hasS3Secret = MediaHandler::rawSetting('s3_secret_key', '') !== '';
     $hasR2AccessKey = MediaHandler::rawSetting('r2_access_key', '') !== '';
@@ -501,7 +542,7 @@ function wpstow_register_csf_options()
 
     CSF::createSection($key, [
         'title' => '存储配置',
-        'icon' => 'fas fa-cloud',
+        'icon' => 'fa fa-cloud',
         'fields' => [
             ['type' => 'subheading', 'content' => '<span class="wpstow-step-title"><b>1</b> 按文件类型分配存储</span><small>选择“仅本地”时，该类型不会进入云端上传流程。OneImg 和聚合图床仅支持图片。</small>', 'class' => 'wpstow-step-heading'],
             [
@@ -582,10 +623,10 @@ function wpstow_register_csf_options()
             ['type' => 'subheading', 'content' => '<span class="wpstow-section-heading">连接 OneImg</span><small>开源图床程序，WPStow 通过 API 上传图片。<a href="https://github.com/onexru/oneimg" target="_blank" rel="noopener noreferrer">查看项目与部署说明</a></small>', 'class' => 'wpstow-step-heading wpstow-provider-heading', 'dependency' => ['provider_config_type', '==', 'oneimg']],
             ['id' => 'oneimg_endpoint', 'title' => '图床地址', 'type' => 'text', 'attributes' => ['type' => 'url'], 'placeholder' => 'https://img.example.com', 'desc' => '填写 OneImg 站点根地址，不要附加 <code>/api</code>。', 'dependency' => ['provider_config_type', '==', 'oneimg']],
             ['id' => 'oneimg_token_input', 'title' => 'API Token', 'type' => 'text', 'attributes' => ['type' => 'password', 'autocomplete' => 'new-password'], 'placeholder' => $hasOneImgToken ? '已保存，留空不变' : '请输入 OneImg API Token', 'desc' => '在 OneImg 后台生成。为安全起见，已保存的 Token 不会回显。', 'dependency' => ['provider_config_type', '==', 'oneimg']],
-            ['type' => 'subheading', 'content' => '<span class="wpstow-section-heading">连接聚合图床</span><small>使用 Superbed 官方 API 上传图片、获取直链并同步移入回收站。<a href="https://www.superbed.cn/help" target="_blank" rel="noopener noreferrer">查看 API 文档</a></small>', 'class' => 'wpstow-step-heading wpstow-provider-heading', 'dependency' => ['provider_config_type', '==', 'superbed']],
+            ['type' => 'subheading', 'content' => '<span class="wpstow-section-heading">连接聚合图床</span><small>使用 Superbed 官方 API 上传图片、获取直链并同步移入回收站。<a href="https://www.superbed.cn/help" target="_blank" rel="noopener noreferrer">查看 API 文档</a> · <a href="https://www.superbed.cn/" target="_blank" rel="noopener noreferrer">官方网站</a></small>', 'class' => 'wpstow-step-heading wpstow-provider-heading', 'dependency' => ['provider_config_type', '==', 'superbed']],
             ['id' => 'superbed_endpoint', 'title' => 'API 地址', 'type' => 'text', 'attributes' => ['type' => 'url'], 'default' => 'https://api.superbed.cc', 'placeholder' => 'https://api.superbed.cc', 'desc' => '默认使用官方 API 地址；不要附加 <code>/api/v1</code>。', 'dependency' => ['provider_config_type', '==', 'superbed']],
             ['id' => 'superbed_api_key_input', 'title' => 'API Key', 'type' => 'text', 'attributes' => ['type' => 'password', 'autocomplete' => 'new-password'], 'placeholder' => $hasSuperbedApiKey ? '已保存，留空不变' : '请输入聚合图床 API Key', 'desc' => '在聚合图床后台生成。为安全起见，已保存的 API Key 不会回显。', 'dependency' => ['provider_config_type', '==', 'superbed']],
-            ['id' => 'superbed_folder_id', 'title' => '目录 UUID', 'type' => 'text', 'attributes' => ['autocomplete' => 'off'], 'placeholder' => '可选，留空上传到根目录', 'desc' => '可在聚合图床目录列表或 API 中取得目标目录 UUID。', 'dependency' => ['provider_config_type', '==', 'superbed']],
+            ['id' => 'superbed_folder_id', 'title' => '上传目录', 'type' => 'select', 'options' => $superbedFolderOptions, 'default' => '', 'desc' => $superbedFolderDescription, 'class' => 'wpstow-superbed-folder-field', 'dependency' => ['provider_config_type', '==', 'superbed']],
             ['type' => 'subheading', 'content' => '<span class="wpstow-section-heading">连接 S3</span><small>适用于 Amazon S3、MinIO 及其他 S3 兼容服务。</small>', 'class' => 'wpstow-step-heading wpstow-provider-heading', 'dependency' => ['provider_config_type', '==', 's3']],
             ['id' => 's3_endpoint', 'title' => 'Endpoint', 'type' => 'text', 'attributes' => ['type' => 'url'], 'placeholder' => 'https://s3.amazonaws.com', 'dependency' => ['provider_config_type', '==', 's3']],
             ['id' => 's3_bucket', 'title' => 'Bucket', 'type' => 'text', 'dependency' => ['provider_config_type', '==', 's3']],
@@ -627,7 +668,7 @@ function wpstow_register_csf_options()
 
     CSF::createSection($key, [
         'title' => '文件命名',
-        'icon' => 'fas fa-i-cursor',
+        'icon' => 'fa fa-tag',
         'fields' => [
             ['type' => 'subheading', 'content' => '<span class="wpstow-section-heading">新上传文件的名称</span><small>统一用于浏览器直传和服务器上传；已有媒体与云端对象不会被改名。</small>', 'class' => 'wpstow-step-heading'],
             [
@@ -656,22 +697,23 @@ function wpstow_register_csf_options()
 
     CSF::createSection($key, [
         'title' => '图片处理',
-        'icon' => 'fas fa-image',
+        'icon' => 'fa fa-image',
         'fields' => [
             ['type' => 'subheading', 'content' => '<span class="wpstow-section-heading">外部图片入库</span><small>保存文章时，将正文里的外链或 Base64 图片纳入 WordPress 媒体库。</small>', 'class' => 'wpstow-step-heading'],
             wpstow_csf_button_field('localize_images', '自动本地化', ['no' => '关闭', 'yes' => '开启'], 'no', '开启后会由服务器请求外部图片；请确认站点允许访问的网络范围。'),
             ['type' => 'subheading', 'content' => '<span class="wpstow-section-heading">文件生成策略</span><small>控制 WordPress、主题和其他插件是否为新图片生成派生文件。</small>', 'class' => 'wpstow-step-heading'],
-            wpstow_csf_button_field('disable_image_subsizes', '原图单文件模式', ['no' => '生成响应式尺寸', 'yes' => '只保留上传文件'], 'no', '启用后，新上传图片不生成 thumbnail、medium、large、主题尺寸、<code>-scaled</code> 或 <code>-rotated</code> 文件，也不自动转换格式。仅影响之后上传的图片；压缩和水印仍按下方开关执行。'),
-            ['type' => 'subheading', 'content' => '<span class="wpstow-section-heading">上传前处理</span><small>以下处理会在文件转存前执行，未开启的功能不会改变原图。</small>', 'class' => 'wpstow-step-heading'],
-            wpstow_csf_button_field('image_compress', '图片压缩', ['no' => '关闭', 'yes' => '启用'], 'no'),
-            ['id' => 'image_compress_quality', 'title' => '压缩质量', 'type' => 'slider', 'min' => 10, 'max' => 100, 'step' => 1, 'unit' => '%', 'default' => 80, 'desc' => '建议 70–85，数值越小压缩越强。', 'dependency' => ['image_compress', '==', 'yes']],
+            wpstow_csf_button_field('disable_image_subsizes', '原图单文件模式', ['no' => '生成响应式尺寸', 'yes' => '只保留上传文件'], 'no', '启用后，新上传图片不生成 thumbnail、medium、large、主题尺寸、<code>-scaled</code> 或 <code>-rotated</code> 文件。不会阻止下方明确启用的 WebP 转换；仅影响之后上传的图片。'),
+            ['type' => 'subheading', 'content' => '<span class="wpstow-section-heading">格式转换</span><small>在转存前统一处理新上传的栅格图片；转换不可用时保留原文件。</small>', 'class' => 'wpstow-step-heading'],
+            wpstow_csf_button_field('image_format_conversion', '统一转为 WebP', ['no' => '关闭', 'yes' => '启用'], 'no', 'JPEG、PNG、BMP、AVIF、HEIC 等服务器可解码的栅格图会转为 <code>.webp</code>。GIF 为避免丢失动画、SVG 为保留矢量特性，始终保持原格式；转换失败也会使用原文件继续上传。'),
+            ['id' => 'image_webp_quality', 'title' => 'WebP 转换质量', 'type' => 'slider', 'min' => 10, 'max' => 100, 'step' => 1, 'unit' => '%', 'default' => 82, 'desc' => '建议 75–85；数值越高画质越好、文件通常越大。', 'dependency' => ['image_format_conversion', '==', 'yes']],
+            ['type' => 'subheading', 'content' => '<span class="wpstow-section-heading">图片水印</span><small>水印会先写入图片，再按上方设置转换为 WebP。</small>', 'class' => 'wpstow-step-heading'],
             wpstow_csf_button_field('image_watermark', '图片水印', ['no' => '关闭', 'yes' => '启用'], 'no'),
             wpstow_csf_button_field('watermark_type', '水印类型', ['text' => '文字水印', 'image' => '图片水印'], 'text', '', ['image_watermark', '==', 'yes']),
             ['id' => 'watermark_text', 'title' => '水印文字', 'type' => 'text', 'placeholder' => '请输入水印文字', 'dependency' => ['image_watermark|watermark_type', '==|==', 'yes|text']],
             ['id' => 'watermark_image', 'title' => '水印图片', 'type' => 'media', 'url' => false, 'library' => ['image'], 'button_title' => '选择水印图片', 'desc' => '建议使用透明背景 PNG。', 'dependency' => ['image_watermark|watermark_type', '==|==', 'yes|image']],
             wpstow_csf_button_field('watermark_position', '水印位置', ['top-left' => '左上', 'top-center' => '顶部居中', 'top-right' => '右上', 'center-left' => '左侧居中', 'center' => '居中', 'center-right' => '右侧居中', 'bottom-left' => '左下', 'bottom-center' => '底部居中', 'bottom-right' => '右下'], 'bottom-right', '', ['image_watermark', '==', 'yes']),
             ['id' => 'watermark_opacity', 'title' => '水印透明度', 'type' => 'slider', 'min' => 10, 'max' => 100, 'step' => 1, 'unit' => '%', 'default' => 50, 'dependency' => ['image_watermark', '==', 'yes']],
-            wpstow_csf_button_field('keep_original', '处理前原图', ['yes' => '保留原图（推荐）', 'no' => '仅保留处理结果'], 'yes', '仅在启用压缩或水印后生效；保留原图便于恢复。'),
+            wpstow_csf_button_field('keep_original', '处理前原图', ['yes' => '保留原图（推荐）', 'no' => '仅保留处理结果'], 'yes', '仅在启用格式转换或水印后生效；保留原图便于恢复。'),
         ],
     ]);
 
@@ -695,7 +737,7 @@ function wpstow_register_csf_options()
 
     CSF::createSection($key, [
         'title' => '媒体接管',
-        'icon' => 'fas fa-tasks',
+        'icon' => 'fa fa-tasks',
         'fields' => [
             ['type' => 'callback', 'function' => 'wpstow_csf_render_media_manager'],
         ],
@@ -703,7 +745,7 @@ function wpstow_register_csf_options()
 
     CSF::createSection($key, [
         'title' => '运行状态',
-        'icon' => 'fas fa-heartbeat',
+        'icon' => 'fa fa-heartbeat',
         'fields' => [
             ['type' => 'callback', 'function' => 'wpstow_csf_render_status'],
             ['type' => 'subheading', 'content' => '<span class="wpstow-section-heading">故障排查</span><small>正常使用无需开启日志或执行自检。</small>', 'class' => 'wpstow-step-heading'],
@@ -714,8 +756,8 @@ function wpstow_register_csf_options()
     ]);
 
     CSF::createSection($key, [
-        'title' => '主题更新',
-        'icon' => 'fas fa-cloud-download-alt',
+        'title' => '插件更新',
+        'icon' => 'fa fa-cloud-download',
         'fields' => [
             ['type' => 'callback', 'function' => 'wpstow_csf_render_update_panel', 'class' => 'wpstow-update-field'],
         ],

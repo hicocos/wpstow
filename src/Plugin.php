@@ -52,8 +52,8 @@ abstract class Plugin
     // 功能开关
     public $localize_images;      // 图片本地化开关
     public $disable_image_subsizes; // 禁止生成缩略图、缩放图等派生文件
-    public $image_compress;       // 图片压缩开关
-    public $image_compress_quality; // 压缩质量
+    public $image_format_conversion; // WebP 格式转换开关
+    public $image_webp_quality;   // WebP 转换质量
     public $image_watermark;      // 水印开关
     public $watermark_type;       // 水印类型: text/image
     public $watermark_text;       // 水印文字
@@ -141,8 +141,8 @@ abstract class Plugin
         // 功能开关初始化
         $this->localize_images = $setting['localize_images'] ?? 'no';
         $this->disable_image_subsizes = $setting['disable_image_subsizes'] ?? 'no';
-        $this->image_compress = $setting['image_compress'] ?? 'no';
-        $this->image_compress_quality = $setting['image_compress_quality'] ?? 80;
+        $this->image_format_conversion = $setting['image_format_conversion'] ?? 'no';
+        $this->image_webp_quality = $setting['image_webp_quality'] ?? 82;
         $this->image_watermark = $setting['image_watermark'] ?? 'no';
         $this->watermark_type = $setting['watermark_type'] ?? 'text';
         $this->watermark_text = $setting['watermark_text'] ?? '';
