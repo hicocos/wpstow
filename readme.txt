@@ -4,7 +4,7 @@ Tags: media, superbed, oneimg, s3, cloudflare-r2, webdav, ftp, image-optimizatio
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 2.0.4
+Stable tag: 2.0.3
 License: MIT
 License URI: https://opensource.org/license/mit/
 
@@ -79,13 +79,11 @@ WPStow 会把媒体文件发送到管理员配置的存储服务。存储凭据�
 
 == Changelog ==
 
-= 2.0.4 =
-* 按产品规划彻底移除视频压缩与视频水印功能、后台菜单和 FFmpeg 依赖。
-* 保存设置时自动清理旧版本遗留的视频处理选项；视频转存功能不受影响。
-
 = 2.0.3 =
 * 图片处理移除旧压缩功能，新增可调质量的 WebP 格式转换。
 * GIF、SVG 和转换失败的图片自动保留原格式，避免动画、矢量内容或上传流程受损。
+* 彻底移除视频压缩与视频水印功能、后台菜单和 FFmpeg 依赖；视频转存功能不受影响。
+* 保存设置时自动清理旧版本遗留的视频处理选项。
 * 聚合图床新增目录自动检测与选择，同时保留手动填写目录 UUID 的高级入口。
 * 聚合图床 API 文档旁新增官方网站链接。
 * 优化插件更新面板，支持在设置页异步检查并直接发起升级。
