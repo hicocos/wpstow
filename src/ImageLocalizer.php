@@ -102,7 +102,7 @@ class ImageLocalizer
                 return $matches[0];
             }
 
-            $upload = self::saveToMediaLibrary($imageData, $ext, $mimeType);
+            $upload = self::saveToMediaLibrary($imageData, $ext, $mimeType, 'base64-image.' . $ext);
             if ($upload) {
                 Utils::writeLog('base64 图片本地化成功: ' . $upload['url']);
                 return self::replaceImgSrc($matches[0], $upload['url']);
@@ -186,7 +186,9 @@ class ImageLocalizer
 
         $ext = self::getExtFromUrlOrMime($url, $contentType);
         $mimeType = self::getMimeTypeFromExt($ext);
-        return self::saveToMediaLibrary($imageData, $ext, $mimeType);
+        $urlPath = rawurldecode((string) parse_url($url, PHP_URL_PATH));
+        $sourceFilename = wp_basename($urlPath);
+        return self::saveToMediaLibrary($imageData, $ext, $mimeType, $sourceFilename);
     }
 
     private static function isAllowedRemoteUrl($url)
@@ -213,7 +215,7 @@ class ImageLocalizer
         return !empty($records);
     }
 
-    private static function saveToMediaLibrary($imageData, $ext, $mimeType)
+    private static function saveToMediaLibrary($imageData, $ext, $mimeType, $sourceFilename = '')
     {
         $uploadDir = wp_upload_dir();
         if (!empty($uploadDir['error'])) {
@@ -239,7 +241,13 @@ class ImageLocalizer
             return null;
         }
 
-        $filename = wp_unique_filename($uploadDir['path'], FileNaming::generateFilename('remote.' . $ext));
+        $sourceStem = (string) pathinfo((string) $sourceFilename, PATHINFO_FILENAME);
+        $sourceFilename = ($sourceStem !== '' ? $sourceStem : 'remote') . '.' . $ext;
+        $generatedFilename = FileNaming::generateFilename($sourceFilename);
+        $storageType = MediaHandler::getStorageTypeForCategory('image');
+        $filename = FileNaming::isOriginalPreset()
+            ? FileNaming::makeUniqueUploadFilename($generatedFilename, $uploadDir, $storageType)
+            : wp_unique_filename($uploadDir['path'], $generatedFilename);
         $savePath = $uploadDir['path'] . '/' . $filename;
 
         $saved = file_put_contents($savePath, $imageData, LOCK_EX);
@@ -273,10 +281,10 @@ class ImageLocalizer
         }
 
         if ($processedMime === 'image/webp' && $ext !== 'webp') {
-            $webpName = wp_unique_filename(
-                $uploadDir['path'],
-                pathinfo($filename, PATHINFO_FILENAME) . '.webp'
-            );
+            $webpCandidate = pathinfo($filename, PATHINFO_FILENAME) . '.webp';
+            $webpName = FileNaming::isOriginalPreset()
+                ? FileNaming::makeUniqueUploadFilename($webpCandidate, $uploadDir, $storageType)
+                : wp_unique_filename($uploadDir['path'], $webpCandidate);
             $webpPath = $uploadDir['path'] . '/' . $webpName;
             if (!@rename($savePath, $webpPath)) {
                 Utils::writeLog('本地化图片已转为 WebP，但无法更新文件扩展名');

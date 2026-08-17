@@ -200,9 +200,7 @@ class MediaLibraryManager
         foreach ($ids as $attachmentId) {
             $item = self::classify($attachmentId);
             $counts[$item['status']]++;
-            if ($item['status'] !== 'managed' && count($items) < 20) {
-                $items[] = $item;
-            }
+            $items[] = $item;
         }
 
         $nextCursor = $ids ? (int) end($ids) : (int) $cursor;

@@ -4,7 +4,7 @@ Tags: media, superbed, oneimg, s3, cloudflare-r2, webdav, ftp, image-optimizatio
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 2.0.4
+Stable tag: 2.0.5
 License: MIT
 License URI: https://opensource.org/license/mit/
 
@@ -78,6 +78,12 @@ WPStow 会把媒体文件发送到管理员配置的存储服务。存储凭据�
 * 生产环境应限制插件日志目录的 Web 访问并定期轮换云存储凭据。
 
 == Changelog ==
+
+= 2.0.5 =
+* 文件命名默认改为保留兼容处理后的原名，并在本地、媒体记录、待删除队列及 S3/R2 云端对象之间安全处理同目录重名。
+* 外链图片本地化和浏览器直传统一沿用文件命名规则，无法确认云端重名状态时停止上传以避免覆盖。
+* 媒体接管扫描不再截断为 20 条或隐藏已接管附件，完整结果改为每页 50 条展示。
+* 优化停止扫描逻辑：立即取消当前请求和下一批任务，停止按钮仅在扫描期间可用，并完善完成、停止和异常状态收尾。
 
 = 2.0.4 =
 * 修复关闭“保留本地副本”后无法配置媒体访问地址和云端读取失败回退的问题，历史本地副本仍可按附件实际状态使用。

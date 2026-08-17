@@ -302,6 +302,8 @@
         scanned: 0,
         counts: {},
         items: [],
+        itemPage: 1,
+        itemPageSize: 50,
         processed: 0,
         failed: 0,
         skipped: 0,
@@ -310,6 +312,8 @@
         job: null
     };
     var queuePollTimer = null;
+    var libraryScanRequest = null;
+    var libraryScanTimer = null;
 
     function emptyLibraryCounts() {
         return {
@@ -333,6 +337,7 @@
         libraryState.scanned = 0;
         libraryState.counts = emptyLibraryCounts();
         libraryState.items = [];
+        libraryState.itemPage = 1;
         libraryState.processed = 0;
         libraryState.failed = 0;
         libraryState.skipped = 0;
@@ -346,7 +351,8 @@
         if (busy || queueActive) {
             $('#wpstow-library-process').prop('disabled', true);
         }
-        $('#wpstow-library-stop').prop('hidden', !busy || libraryState.mode !== 'scan').prop('disabled', false);
+        var canStopScan = busy && libraryState.mode === 'scan';
+        $('#wpstow-library-stop').prop('hidden', false).prop('disabled', !canStopScan);
         $('.wpstow-library-progress').prop('hidden', !busy && !libraryState.scanned && !libraryState.processed && !libraryState.failed);
     }
 
@@ -375,11 +381,18 @@
 
     function renderLibraryItems() {
         var $body = $('#wpstow-library-items').empty();
+        var $tableWrap = $('.wpstow-library-table-wrap');
         if (!libraryState.items.length) {
-            $('.wpstow-library-table-wrap').prop('hidden', true);
+            $tableWrap.prop('hidden', true);
+            $('#wpstow-library-pagination').remove();
             return;
         }
-        libraryState.items.slice(-20).forEach(function (item) {
+
+        var pageSize = libraryState.itemPageSize;
+        var totalPages = Math.max(1, Math.ceil(libraryState.items.length / pageSize));
+        libraryState.itemPage = Math.min(totalPages, Math.max(1, libraryState.itemPage));
+        var start = (libraryState.itemPage - 1) * pageSize;
+        libraryState.items.slice(start, start + pageSize).forEach(function (item) {
             var $row = $('<tr>');
             var $title = $('<span>', {text: item.title || ('附件 #' + item.id)});
             if (item.edit_url) {
@@ -395,7 +408,41 @@
             $('<td>', {text: item.message || '-'}).appendTo($row);
             $body.append($row);
         });
-        $('.wpstow-library-table-wrap').prop('hidden', false);
+        $tableWrap.prop('hidden', false);
+
+        var $pagination = $('#wpstow-library-pagination');
+        if (!$pagination.length) {
+            $pagination = $('<div>', {
+                id: 'wpstow-library-pagination',
+                'class': 'tablenav bottom wpstow-library-pagination'
+            }).appendTo($tableWrap);
+        }
+        $pagination.empty()
+            .append($('<span>', {
+                'class': 'displaying-num',
+                text: libraryState.items.length + ' 个附件'
+            }))
+            .append($('<span>', {'class': 'pagination-links'})
+                .append($('<button>', {
+                    type: 'button',
+                    id: 'wpstow-library-prev',
+                    'class': 'button',
+                    title: '上一页',
+                    'aria-label': '上一页',
+                    disabled: libraryState.itemPage <= 1
+                }).append($('<span>', {'class': 'dashicons dashicons-arrow-left-alt2', 'aria-hidden': 'true'})))
+                .append($('<span>', {
+                    'class': 'paging-input',
+                    text: '第 ' + libraryState.itemPage + ' / ' + totalPages + ' 页'
+                }))
+                .append($('<button>', {
+                    type: 'button',
+                    id: 'wpstow-library-next',
+                    'class': 'button',
+                    title: '下一页',
+                    'aria-label': '下一页',
+                    disabled: libraryState.itemPage >= totalPages
+                }).append($('<span>', {'class': 'dashicons dashicons-arrow-right-alt2', 'aria-hidden': 'true'}))));
     }
 
     function addLibraryItems(items) {
@@ -407,10 +454,18 @@
                 libraryState.items[existingIndex] = item;
             }
         });
-        if (libraryState.items.length > 20) {
-            libraryState.items = libraryState.items.slice(-20);
-        }
         renderLibraryItems();
+    }
+
+    function changeLibraryPage(direction) {
+        var totalPages = Math.max(1, Math.ceil(libraryState.items.length / libraryState.itemPageSize));
+        var targetPage = Math.min(totalPages, Math.max(1, libraryState.itemPage + direction));
+        if (targetPage === libraryState.itemPage) {
+            return;
+        }
+        libraryState.itemPage = targetPage;
+        renderLibraryItems();
+        $('.wpstow-library-table-wrap')[0].scrollIntoView({block: 'start', behavior: 'smooth'});
     }
 
     function libraryRequest(action, data) {
@@ -424,10 +479,14 @@
     }
 
     function finishLibraryScan(stopped) {
+        window.clearTimeout(libraryScanTimer);
+        libraryScanTimer = null;
+        libraryScanRequest = null;
         libraryState.mode = '';
         setLibraryBusy(false);
         renderLibraryCounts();
         renderLibraryItems();
+        updateLibraryProgress(stopped ? '扫描已停止' : '扫描完成', libraryState.scanned, libraryState.total);
         var actionable = (libraryState.counts.ready || 0) + (libraryState.counts.failed || 0);
         $('#wpstow-library-process').prop('disabled', actionable === 0 || !!(libraryState.job && libraryState.job.active));
         if (stopped) {
@@ -442,14 +501,21 @@
             finishLibraryScan(true);
             return;
         }
-        libraryRequest('wpstow_scan_media_library', {
+        var request = libraryRequest('wpstow_scan_media_library', {
             category: libraryState.category,
             cursor: libraryState.cursor,
             max_id: libraryState.maxId
-        }).done(function (response) {
+        });
+        libraryScanRequest = request;
+        request.done(function (response) {
+            if (libraryState.stopped || libraryState.mode !== 'scan') {
+                return;
+            }
             if (!response || !response.success) {
+                libraryState.mode = '';
                 setLibraryBusy(false);
                 $('#wpstow-library-process').prop('disabled', true);
+                updateLibraryProgress('扫描失败', libraryState.scanned, libraryState.total);
                 setLibraryNotice(messageFrom(response, '扫描失败'), 'error');
                 return;
             }
@@ -470,12 +536,21 @@
             if (data.done) {
                 finishLibraryScan(false);
             } else {
-                window.setTimeout(scanLibraryPage, 40);
+                libraryScanTimer = window.setTimeout(scanLibraryPage, 40);
             }
-        }).fail(function (xhr) {
+        }).fail(function (xhr, textStatus) {
+            if (textStatus === 'abort' || libraryState.stopped || libraryState.mode !== 'scan') {
+                return;
+            }
+            libraryState.mode = '';
             setLibraryBusy(false);
             $('#wpstow-library-process').prop('disabled', true);
+            updateLibraryProgress('扫描中断', libraryState.scanned, libraryState.total);
             setLibraryNotice(messageFrom(xhr.responseJSON, '扫描请求失败'), 'error');
+        }).always(function () {
+            if (libraryScanRequest === request) {
+                libraryScanRequest = null;
+            }
         });
     }
 
@@ -591,9 +666,18 @@
     }
 
     function stopLibraryOperation() {
+        if (libraryState.mode !== 'scan') {
+            return;
+        }
         libraryState.stopped = true;
-        $('#wpstow-library-stop').prop('disabled', true);
-        setLibraryNotice('正在停止扫描…', 'warning');
+        window.clearTimeout(libraryScanTimer);
+        libraryScanTimer = null;
+        var request = libraryScanRequest;
+        libraryScanRequest = null;
+        if (request && request.readyState !== 4) {
+            request.abort();
+        }
+        finishLibraryScan(true);
     }
 
     function controlQueue(command) {
@@ -788,7 +872,18 @@
     }
 
     function updateNamingPreview() {
-        var preset = value('filename_preset') || 'short';
+        var preset = value('filename_preset') || 'original';
+        var $preview = $('#wpstow-naming-preview');
+        var $validation = $('#wpstow-naming-validation');
+        if (!$preview.length) {
+            return;
+        }
+        if (preset === 'original') {
+            $preview.text('2026/08/示例图片.jpg');
+            $validation.attr('class', 'is-success').text('保留兼容处理后的原名；同目录重名时追加 （1）、（2）');
+            return;
+        }
+
         var templates = {
             short: '{random:8}',
             date_random: '{year}{month}{day}-{random:8}',
@@ -796,12 +891,6 @@
             timestamp_random: '{timestamp}-{random:8}'
         };
         var template = preset === 'custom' ? String(value('filename_template')).trim() : templates[preset];
-        var $preview = $('#wpstow-naming-preview');
-        var $validation = $('#wpstow-naming-validation');
-        if (!$preview.length) {
-            return;
-        }
-
         var error = '';
         if (!template) {
             error = '模板不能为空';
@@ -864,6 +953,8 @@
         .on('click', '#wpstow-library-scan', startLibraryScan)
         .on('click', '#wpstow-library-process', startLibraryProcess)
         .on('click', '#wpstow-library-stop', stopLibraryOperation)
+        .on('click', '#wpstow-library-prev', function () { changeLibraryPage(-1); })
+        .on('click', '#wpstow-library-next', function () { changeLibraryPage(1); })
         .on('click', '#wpstow-check-updates', startUpdateCheck)
         .on('click', '#wpstow-queue-pause', function () { controlQueue('pause'); })
         .on('click', '#wpstow-queue-resume', function () { controlQueue('resume'); })

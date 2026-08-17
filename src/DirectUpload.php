@@ -90,7 +90,11 @@ class DirectUpload
         }
 
         $storageClass = MediaHandler::getStorageClass($storageType);
-        $key = self::createObjectKey($filename);
+        try {
+            $key = self::createObjectKey($filename, $storageType, $storageClass);
+        } catch (\Throwable $e) {
+            wp_send_json_error(['message' => $e->getMessage()], 502);
+        }
         $token = bin2hex(random_bytes(24));
         $mode = $size <= self::SIMPLE_UPLOAD_LIMIT ? 'put' : 'multipart';
         $session = [
@@ -346,12 +350,31 @@ class DirectUpload
         return true;
     }
 
-    private static function createObjectKey($filename)
+    private static function createObjectKey($filename, $storageType, $storageClass)
     {
         $uploadDir = wp_upload_dir();
         $objectName = FileNaming::generateFilename($filename);
         $subdir = trim((string) $uploadDir['subdir'], '/');
-        return $subdir === '' ? $objectName : $subdir . '/' . $objectName;
+        $buildKey = static function ($candidate) use ($subdir) {
+            return $subdir === '' ? $candidate : $subdir . '/' . $candidate;
+        };
+
+        if (!FileNaming::isOriginalPreset()) {
+            return $buildKey($objectName);
+        }
+
+        $objectName = FileNaming::makeUniqueFilename($objectName, static function ($candidate) use ($buildKey, $storageType, $storageClass) {
+            $key = $buildKey($candidate);
+            if (FileNaming::attachmentPathExists($key, $storageType)) {
+                return true;
+            }
+            $exists = $storageClass::objectExists($key);
+            if ($exists === null) {
+                throw new \RuntimeException('无法确认云端目录是否存在同名文件，请检查存储连接后重试');
+            }
+            return $exists;
+        });
+        return $buildKey($objectName);
     }
 
     private static function getPartSize($fileSize)

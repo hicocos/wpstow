@@ -195,6 +195,7 @@ function wpstow_csf_render_filename_guide()
     echo '</dl></div>';
     echo '<div><strong>预设示例</strong><dl>';
     foreach ([
+        '文件原名' => '示例图片.jpg',
         $presetTemplates['short'] => 'k7m2q9v4.jpg',
         $presetTemplates['date_random'] => '20260816-k7m2q9v4.jpg',
         $presetTemplates['original_random'] => 'Summer-Photo-k7m2q9v4.jpg',
@@ -203,7 +204,7 @@ function wpstow_csf_render_filename_guide()
         echo '<dt><code>' . esc_html($rule) . '</code></dt><dd><code>' . esc_html($result) . '</code></dd>';
     }
     echo '</dl></div></div>';
-    echo '<p class="wpstow-naming-note">规则仅影响之后上传的文件。启用 WordPress 年月目录时仍保留路径，例如 <code>2026/08/</code>；扩展名自动继承，无需写进模板。S3、R2、WebDAV 和 FTP 会严格使用该名称；OneImg 与聚合图床若服务端二次改名，以服务端返回结果为准。</p>';
+    echo '<p class="wpstow-naming-note">规则仅影响之后上传的文件。选择“文件原名”时会保留中文等安全字符，并清理路径符号、控制字符及 URL 保留字符；同一目录重名时依次追加 <code>（1）</code>、<code>（2）</code>。启用 WordPress 年月目录时仍保留路径，例如 <code>2026/08/</code>，不同目录互不影响。S3、R2、WebDAV 和 FTP 会严格使用该名称；OneImg 与聚合图床若服务端二次改名，以服务端返回结果为准。</p>';
     echo '</div>';
 }
 
@@ -329,7 +330,7 @@ function wpstow_csf_render_media_manager()
     echo '</select>';
     echo '<button type="button" class="button button-secondary" id="wpstow-library-scan"><i class="fas fa-search"></i> 扫描媒体库</button>';
     echo '<button type="button" class="button button-primary" id="wpstow-library-process" disabled><i class="fas fa-cloud-upload-alt"></i> 接管可处理项</button>';
-    echo '<button type="button" class="button" id="wpstow-library-stop" hidden><i class="fas fa-stop"></i> 停止扫描</button>';
+    echo '<button type="button" class="button" id="wpstow-library-stop" disabled><i class="fas fa-stop"></i> 停止扫描</button>';
     echo '<span class="wpstow-queue-controls" hidden>';
     echo '<button type="button" class="button" id="wpstow-queue-pause"><i class="fas fa-pause"></i> 暂停</button>';
     echo '<button type="button" class="button" id="wpstow-queue-resume"><i class="fas fa-play"></i> 继续</button>';
@@ -664,7 +665,7 @@ function wpstow_register_csf_options()
                 'type' => 'select',
                 'options' => FileNaming::getPresets(),
                 'default' => FileNaming::DEFAULT_PRESET,
-                'desc' => '默认“极短随机名”兼顾链接长度和防重名。所有方案都会自动保留原扩展名。',
+                'desc' => '默认保留兼容处理后的文件原名；同一目录出现重名时自动追加 <code>（1）</code>、<code>（2）</code>。所有方案都会保留原扩展名。',
                 'class' => 'wpstow-storage-picker',
             ],
             [

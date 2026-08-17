@@ -60,6 +60,29 @@ class CloudDeletionQueue
         self::scheduleWatchdog();
     }
 
+    public static function hasPendingDeletion($storageType, $key, array $storageIdentity = [])
+    {
+        if (get_option(self::DB_VERSION_OPTION) !== self::DB_VERSION) {
+            return false;
+        }
+
+        $storageType = sanitize_key((string) $storageType);
+        $key = StorageInterface::normalizeObjectKey($key);
+        if ($storageType === '' || $key === false) {
+            return false;
+        }
+        if (!$storageIdentity) {
+            $storageIdentity = MediaHandler::getStorageIdentity($storageType);
+        }
+        $identity = MediaHandler::normalizeStorageIdentity($storageIdentity);
+
+        global $wpdb;
+        return (bool) $wpdb->get_var($wpdb->prepare(
+            'SELECT 1 FROM ' . self::tableName() . " WHERE task_key = %s AND status = 'pending' LIMIT 1",
+            self::taskKey($storageType, $key, $identity)
+        ));
+    }
+
     public static function deactivate()
     {
         wp_clear_scheduled_hook(self::WATCHDOG_HOOK);

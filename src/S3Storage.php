@@ -364,7 +364,16 @@ class S3Storage extends StorageInterface
         return self::signedApiRequest('HEAD', $key);
     }
 
-    private static function signedApiRequest($method, $key, array $query = [], $body = '', array $extraHeaders = [])
+    public static function objectExists($key)
+    {
+        $response = self::signedApiRequest('HEAD', $key, [], '', [], false);
+        if (!empty($response['status'])) {
+            return true;
+        }
+        return (int) ($response['http_code'] ?? 0) === 404 ? false : null;
+    }
+
+    private static function signedApiRequest($method, $key, array $query = [], $body = '', array $extraHeaders = [], $logFailures = true)
     {
         $config = static::getConfig();
         if (!self::isCompleteConfig($config)) {
@@ -431,7 +440,7 @@ class S3Storage extends StorageInterface
         curl_close($ch);
 
         $success = $httpCode >= 200 && $httpCode < 300;
-        if (!$success) {
+        if (!$success && $logFailures) {
             Utils::writeLog('S3 API ' . $method . ' 失败: HTTP ' . $httpCode . ' ' . substr((string) $responseBody, 0, 1000));
         }
         return [

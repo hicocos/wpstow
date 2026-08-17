@@ -4,7 +4,7 @@ namespace WPStow;
 
 class FileNaming
 {
-    public const DEFAULT_PRESET = 'short';
+    public const DEFAULT_PRESET = 'original';
     public const DEFAULT_TEMPLATE = '{random:8}';
 
     private const PRESET_TEMPLATES = [
@@ -21,7 +21,8 @@ class FileNaming
     public static function getPresets()
     {
         return [
-            'short' => '极短随机名（推荐）',
+            'original' => '文件原名',
+            'short' => '极短随机名',
             'date_random' => '日期 + 随机码',
             'original_random' => '原文件名 + 随机码',
             'timestamp_random' => '时间戳 + 随机码',
@@ -83,7 +84,12 @@ class FileNaming
 
     public static function generateFilename($originalFilename, $preset = null, $customTemplate = null, $timestamp = null)
     {
-        $originalFilename = sanitize_file_name(wp_basename((string) $originalFilename));
+        $originalFilename = self::normalizeOriginalFilename($originalFilename);
+        $preset = $preset === null ? (string) MediaHandler::config('filename_preset') : (string) $preset;
+        if ($preset === 'original') {
+            return $originalFilename;
+        }
+
         $extension = strtolower((string) pathinfo($originalFilename, PATHINFO_EXTENSION));
         $name = (string) pathinfo($originalFilename, PATHINFO_FILENAME);
         $name = trim($name, ".-_ \t\n\r\0\x0B");
@@ -124,6 +130,80 @@ class FileNaming
         return $extension !== '' ? $stem . '.' . $extension : $stem;
     }
 
+    public static function isOriginalPreset($preset = null)
+    {
+        $preset = $preset === null ? (string) MediaHandler::config('filename_preset') : (string) $preset;
+        return $preset === 'original';
+    }
+
+    /**
+     * Resolve duplicate names within the caller's directory scope.
+     */
+    public static function makeUniqueFilename($filename, callable $isUsed)
+    {
+        $filename = self::normalizeOriginalFilename($filename);
+        $extension = strtolower((string) pathinfo($filename, PATHINFO_EXTENSION));
+        $stem = (string) pathinfo($filename, PATHINFO_FILENAME);
+        $baseStem = $stem;
+        $nextNumber = 1;
+
+        if (preg_match('/^(.*)（([1-9][0-9]*)）$/u', $stem, $matches) && trim($matches[1]) !== '') {
+            $baseStem = $matches[1];
+            $nextNumber = (int) $matches[2] + 1;
+        }
+
+        $candidate = $filename;
+        for ($attempt = 0; $attempt < 10000; $attempt++) {
+            if (!$isUsed($candidate)) {
+                return $candidate;
+            }
+            $candidate = self::buildNumberedFilename($baseStem, $extension, $nextNumber);
+            $nextNumber++;
+        }
+
+        throw new \RuntimeException('同目录重名文件过多，无法生成可用文件名');
+    }
+
+    public static function attachmentPathExists($relativePath, $storageType = '')
+    {
+        $relativePath = StorageInterface::normalizeObjectKey($relativePath);
+        if ($relativePath === false) {
+            return true;
+        }
+
+        global $wpdb;
+        $attachmentExists = (bool) $wpdb->get_var($wpdb->prepare(
+            "SELECT 1 FROM {$wpdb->postmeta}
+             WHERE meta_key IN ('_wp_attached_file', '_wpstow_cloud_key') AND meta_value = %s
+             LIMIT 1",
+            $relativePath
+        ));
+        if ($attachmentExists) {
+            return true;
+        }
+
+        return $storageType !== ''
+            && CloudDeletionQueue::hasPendingDeletion($storageType, $relativePath);
+    }
+
+    public static function makeUniqueUploadFilename($filename, array $uploadDir = null, $storageType = '')
+    {
+        $uploadDir = $uploadDir ?: wp_upload_dir();
+        if (!empty($uploadDir['error']) || empty($uploadDir['path'])) {
+            return self::normalizeOriginalFilename($filename);
+        }
+
+        $subdir = trim((string) ($uploadDir['subdir'] ?? ''), '/');
+        return self::makeUniqueFilename($filename, static function ($candidate) use ($uploadDir, $subdir, $storageType) {
+            $localCandidate = wp_unique_filename((string) $uploadDir['path'], $candidate);
+            if ($localCandidate !== $candidate) {
+                return true;
+            }
+            $relativePath = $subdir === '' ? $candidate : $subdir . '/' . $candidate;
+            return self::attachmentPathExists($relativePath, $storageType);
+        });
+    }
+
     public static function filterUploadFilename($file)
     {
         if (!is_array($file) || empty($file['name']) || !empty($file['error'])) {
@@ -136,12 +216,59 @@ class FileNaming
             $mimeType = sanitize_mime_type((string) $checked['type']);
         }
         $storageType = MediaHandler::getStorageTypeForCategory(MediaHandler::getMediaCategory($mimeType));
+        if (self::isOriginalPreset()) {
+            $file['name'] = self::makeUniqueUploadFilename((string) $file['name'], null, $storageType);
+            return $file;
+        }
+
         if ($storageType === 'local') {
             return $file;
         }
 
         $file['name'] = self::generateFilename((string) $file['name']);
         return $file;
+    }
+
+    private static function normalizeOriginalFilename($filename)
+    {
+        $filename = sanitize_file_name(wp_basename((string) $filename));
+        $extension = strtolower((string) pathinfo($filename, PATHINFO_EXTENSION));
+        $stem = (string) pathinfo($filename, PATHINFO_FILENAME);
+        $stem = trim($stem, ".-_ \t\n\r\0\x0B");
+        if ($stem === '') {
+            $stem = 'file';
+        }
+
+        $maxStemBytes = max(1, 240 - ($extension !== '' ? strlen($extension) + 1 : 0));
+        $stem = self::truncateUtf8($stem, $maxStemBytes);
+        return $extension !== '' ? $stem . '.' . $extension : $stem;
+    }
+
+    private static function buildNumberedFilename($stem, $extension, $number)
+    {
+        $suffix = '（' . max(1, (int) $number) . '）';
+        $maxStemBytes = max(1, 240 - strlen($suffix) - ($extension !== '' ? strlen($extension) + 1 : 0));
+        $stem = rtrim(self::truncateUtf8((string) $stem, $maxStemBytes), ".-_ \t\n\r\0\x0B");
+        if ($stem === '') {
+            $stem = 'file';
+        }
+        return $stem . $suffix . ($extension !== '' ? '.' . $extension : '');
+    }
+
+    private static function truncateUtf8($value, $maxBytes)
+    {
+        $value = (string) $value;
+        if (strlen($value) <= $maxBytes) {
+            return $value;
+        }
+        if (function_exists('mb_strcut')) {
+            return mb_strcut($value, 0, $maxBytes, 'UTF-8');
+        }
+        $truncated = substr($value, 0, $maxBytes);
+        while ($truncated !== '' && preg_match('//u', $truncated) !== 1) {
+            $truncated = substr($truncated, 0, -1);
+        }
+        return $truncated;
     }
 
     private static function randomString($length)
