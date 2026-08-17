@@ -15,7 +15,21 @@ jobs:
       - uses: actions/checkout@v5
       - name: Build plugin archive
         run: git archive --format=zip --prefix=wpstow/ --output="wpstow-${GITHUB_REF_NAME}.zip" HEAD
+      - name: Build release notes
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          {
+            echo '## 更新内容'
+            echo
+            awk -v version="$version" '
+              $0 == "= " version " =" { found = 1; next }
+              found && /^= [0-9]+\.[0-9]+\.[0-9]+ =$/ { exit }
+              found && /^\* / { sub(/^\* /, "- "); print }
+            ' readme.txt
+          } > release-notes.md
+          test "$(grep -c '^- ' release-notes.md)" -gt 0
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" "wpstow-${GITHUB_REF_NAME}.zip" --generate-notes --title "$GITHUB_REF_NAME"
+        run: gh release create "$GITHUB_REF_NAME" "wpstow-${GITHUB_REF_NAME}.zip" --notes-file release-notes.md --title "$GITHUB_REF_NAME"
