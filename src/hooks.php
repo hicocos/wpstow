@@ -5,7 +5,6 @@ use WPStow\MediaHandler;
 use WPStow\MediaProxy;
 use WPStow\ImageLocalizer;
 use WPStow\ImageProcessor;
-use WPStow\VideoProcessor;
 
 add_action('wp_ajax_wpstow_test_storage_connection', [MediaHandler::class, 'test_storage_connection']);
 add_action('wp_ajax_test_storage_connection', [MediaHandler::class, 'test_storage_connection']);
@@ -60,9 +59,6 @@ if (MediaHandler::config('switch') == 'enable') {
     // 图片格式转换和水印处理（在生成缩略图之前）
     add_filter('wp_handle_upload_prefilter', [ImageProcessor::class, 'handleUploadPrefilter'], 10, 1);
     add_filter('wp_handle_sideload_prefilter', [ImageProcessor::class, 'handleUploadPrefilter'], 10, 1);
-
-    // 视频压缩和水印处理
-    add_filter('wp_handle_upload_prefilter', [VideoProcessor::class, 'handleUploadPrefilter'], 10, 1);
 
     // 图片本地化（根据开关决定是否启用）
     if (MediaHandler::config('localize_images') === 'yes') {

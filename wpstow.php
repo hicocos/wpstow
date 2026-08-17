@@ -5,7 +5,7 @@
  * Plugin URI: https://github.com/hicocos/wpstow
  * Update URI: https://github.com/hicocos/wpstow
  * Description: 将 WordPress 媒体上传至云端存储（支持聚合图床/OneImg/S3/R2/WebDAV/FTP）
- * Version: 2.0.3
+ * Version: 2.0.4
  * Author: 梅零落
  * Requires PHP: 7.4
  * Text Domain: wpstow
@@ -15,7 +15,7 @@
 
 if (!defined('ABSPATH')) exit;
 
-define('WPSTOW_VERSION', '2.0.3');
+define('WPSTOW_VERSION', '2.0.4');
 define('WPSTOW_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('WPSTOW_PLUGIN_URL', plugin_dir_url(__FILE__));
 

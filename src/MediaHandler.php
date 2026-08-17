@@ -186,15 +186,6 @@ class MediaHandler extends Plugin
                 return $instance->filename_preset;
             case 'filename_template':
                 return $instance->filename_template;
-            // 视频处理
-            case 'video_compress':
-                return $instance->video_compress;
-            case 'video_compress_quality':
-                return $instance->video_compress_quality;
-            case 'video_max_resolution':
-                return $instance->video_max_resolution;
-            case 'video_watermark':
-                return $instance->video_watermark;
             default:
                 return null;
         }
@@ -689,12 +680,10 @@ class MediaHandler extends Plugin
 
         Utils::writeLog('检查主文件, meta[file]=' . ($meta['file'] ?? 'null'));
 
-        // 仅在图片/视频处理启用时检查是否保留原文件。
+        // 仅在图片水印或格式转换启用时检查是否保留原图。
         $imageConversionEnabled = self::config('image_format_conversion') === 'yes';
         $imageWatermarkEnabled = self::config('image_watermark') === 'yes';
-        $videoCompressEnabled = self::config('video_compress') === 'yes';
-        $videoWatermarkEnabled = self::config('video_watermark') === 'yes';
-        $needCheckKeepOriginal = $imageConversionEnabled || $imageWatermarkEnabled || $videoCompressEnabled || $videoWatermarkEnabled;
+        $needCheckKeepOriginal = $imageConversionEnabled || $imageWatermarkEnabled;
         $keepOriginal = !$needCheckKeepOriginal || self::config('keep_original') !== 'no';
 
         if (!empty($meta['file'])) {

@@ -3,7 +3,6 @@
 use WPStow\MediaHandler;
 use WPStow\FileNaming;
 use WPStow\Utils;
-use WPStow\VideoProcessor;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -138,11 +137,6 @@ function wpstow_csf_normalize_settings($data)
     $normalized['watermark_image'] = is_array($watermarkImage) ? (int) ($watermarkImage['id'] ?? 0) : (int) $watermarkImage;
     $normalized['keep_original'] = wpstow_csf_choice($data['keep_original'] ?? 'yes', ['yes', 'no'], 'yes');
 
-    $normalized['video_compress'] = wpstow_csf_choice($data['video_compress'] ?? 'no', ['yes', 'no'], 'no');
-    $normalized['video_compress_quality'] = wpstow_csf_choice($data['video_compress_quality'] ?? 'medium', ['low', 'medium', 'high'], 'medium');
-    $normalized['video_max_resolution'] = wpstow_csf_choice($data['video_max_resolution'] ?? '1080p', ['480p', '720p', '1080p', '2160p', 'original'], '1080p');
-    $normalized['video_watermark'] = wpstow_csf_choice($data['video_watermark'] ?? 'no', ['yes', 'no'], 'no');
-
     $normalized['log_enabled'] = wpstow_csf_choice($data['log_enabled'] ?? 'no', ['yes', 'no'], 'no');
     $normalized['log_debug'] = wpstow_csf_choice($data['log_debug'] ?? 'no', ['yes', 'no'], 'no');
 
@@ -150,6 +144,10 @@ function wpstow_csf_normalize_settings($data)
         $normalized['oneimg_token_input'],
         $normalized['image_compress'],
         $normalized['image_compress_quality'],
+        $normalized['video_compress'],
+        $normalized['video_compress_quality'],
+        $normalized['video_max_resolution'],
+        $normalized['video_watermark'],
         $normalized['superbed_api_key_input'],
         $normalized['s3_access_key_input'],
         $normalized['s3_secret_key_input'],
@@ -168,14 +166,6 @@ function wpstow_csf_after_save()
     MediaHandler::reloadConfig();
 }
 add_action('csf_wpstow_setting_saved', 'wpstow_csf_after_save');
-
-function wpstow_csf_validate_video_feature($value)
-{
-    if ($value === 'yes' && !VideoProcessor::checkFFmpeg()) {
-        return '未检测到可用 FFmpeg，无法启用此功能。';
-    }
-    return '';
-}
 
 function wpstow_csf_validate_filename_template($value)
 {
@@ -260,7 +250,6 @@ function wpstow_csf_render_status()
     $storageReady = MediaHandler::isStorageEnabledAndConfigured();
     $fallbackLocal = MediaHandler::config('cloud_fallback_local') !== 'no';
     $mediaUrlMode = MediaHandler::config('media_url_mode') === 'local' ? 'local' : 'cloud';
-    $ffmpegAvailable = VideoProcessor::checkFFmpeg();
     $routes = [];
     $missingBackends = [];
     $activeBackends = [];
@@ -285,7 +274,6 @@ function wpstow_csf_render_status()
         ['分类路由', implode(' · ', $routes), '每类文件会使用各自指定的存储源。', true],
         ['存储连接', $connectionLabel, $connectionDesc, $activeBackends && !$missingBackends],
         ['读取策略', $mediaUrlMode === 'local' ? '本地优先' : '云端优先', $fallbackLocal ? '允许本地回退。' : '不进行本地回退。', $fallbackLocal],
-        ['视频处理', $ffmpegAvailable ? 'FFmpeg 可用' : 'FFmpeg 不可用', $ffmpegAvailable ? '可以启用视频处理。' : '视频处理开关会被拒绝保存。', $ffmpegAvailable],
     ];
 
     echo '<div class="wpstow-csf-overview">';
@@ -509,7 +497,6 @@ function wpstow_register_csf_options()
     $hasR2Secret = MediaHandler::rawSetting('r2_secret_key', '') !== '';
     $hasWebdavPassword = MediaHandler::rawSetting('webdav_password', '') !== '';
     $hasFtpPassword = MediaHandler::rawSetting('ftp_password', '') !== '';
-    $ffmpegAvailable = VideoProcessor::checkFFmpeg();
     $legacyType = wpstow_csf_choice(MediaHandler::rawSetting('storage_type', 's3'), ['oneimg', 'superbed', 's3', 'r2', 'webdav', 'ftp'], 's3');
     $routeDefaults = [];
     foreach (['image', 'video', 'audio', 'other'] as $category) {
@@ -715,24 +702,6 @@ function wpstow_register_csf_options()
             ['id' => 'watermark_opacity', 'title' => '水印透明度', 'type' => 'slider', 'min' => 10, 'max' => 100, 'step' => 1, 'unit' => '%', 'default' => 50, 'dependency' => ['image_watermark', '==', 'yes']],
             wpstow_csf_button_field('keep_original', '处理前原图', ['yes' => '保留原图（推荐）', 'no' => '仅保留处理结果'], 'yes', '仅在启用格式转换或水印后生效；保留原图便于恢复。'),
         ],
-    ]);
-
-    $videoFields = [];
-    if (!$ffmpegAvailable) {
-        $videoFields[] = ['type' => 'notice', 'style' => 'warning', 'content' => '未检测到可用 FFmpeg。可能尚未安装，或 PHP-FPM 禁用了 exec；尝试启用视频处理时会拒绝保存。'];
-    }
-    $videoFields[] = ['type' => 'subheading', 'content' => '<span class="wpstow-section-heading">视频转码</span><small>处理由服务器上的 FFmpeg 完成，可能占用较多 CPU 和时间。</small>', 'class' => 'wpstow-step-heading'];
-    $videoFields[] = wpstow_csf_button_field('video_compress', '视频压缩', ['no' => '关闭', 'yes' => '启用'], 'no', '压缩视频以减少存储空间和带宽消耗。');
-    $videoFields[count($videoFields) - 1]['validate'] = 'wpstow_csf_validate_video_feature';
-    $videoFields[] = wpstow_csf_button_field('video_compress_quality', '压缩质量', ['low' => '低 · 更小体积', 'medium' => '中 · 平衡', 'high' => '高 · 更好画质'], 'medium', '', ['video_compress', '==', 'yes']);
-    $videoFields[] = wpstow_csf_button_field('video_max_resolution', '最大分辨率', ['480p' => '480p', '720p' => '720p', '1080p' => '1080p', '2160p' => '4K', 'original' => '保持原始'], '1080p', '超过该分辨率的视频会被缩放。', ['video_compress', '==', 'yes']);
-    $videoFields[] = wpstow_csf_button_field('video_watermark', '视频水印', ['no' => '关闭', 'yes' => '启用'], 'no', '使用“图片处理”中选择的水印图片；未选择图片时不会处理。');
-    $videoFields[count($videoFields) - 1]['validate'] = 'wpstow_csf_validate_video_feature';
-
-    CSF::createSection($key, [
-        'title' => '视频处理',
-        'icon' => 'fa fa-video-camera',
-        'fields' => $videoFields,
     ]);
 
     CSF::createSection($key, [

@@ -1,14 +1,14 @@
 === WPStow ===
 Contributors: moepick
-Tags: media, superbed, oneimg, s3, cloudflare-r2, webdav, ftp, image-optimization, ffmpeg
+Tags: media, superbed, oneimg, s3, cloudflare-r2, webdav, ftp, image-optimization
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 2.0.3
+Stable tag: 2.0.4
 License: MIT
 License URI: https://opensource.org/license/mit/
 
-将 WordPress 媒体安全转存到聚合图床、OneImg、S3、Cloudflare R2、WebDAV 或 FTP，并支持图片优化和 FFmpeg 视频处理。
+将 WordPress 媒体安全转存到聚合图床、OneImg、S3、Cloudflare R2、WebDAV 或 FTP，并支持图片优化。
 
 == Description ==
 
@@ -27,7 +27,6 @@ WPStow 支持 S3/R2 浏览器直传；需要服务器处理或直传失败时，
 * 图片、视频、音频和其他附件可分别选择存储源或仅保留本地
 * R2 私有桶通过固定媒体 URL 302 到短期预签名地址，文件内容不经过 WordPress/PHP
 * 图片外链本地化、统一转换 WebP（质量可调）、文字/图片水印
-* FFmpeg 视频压缩、分辨率限制和视频水印
 * 媒体库 URL、缩略图、srcset、REST 与编辑器适配
 * 可选原图单文件模式，禁止生成缩略图、缩放图和自动格式转换副本
 * 管理后台状态概览、连接测试、上传自检和脱敏日志
@@ -63,10 +62,6 @@ S3 配置和自动转存总开关是两件事。必须把“自动转存新上�
 
 默认沿用 WordPress 的年月目录，例如 `2026/08/example.jpg`。这是对象 Key，不是服务器真实文件夹。
 
-= FFmpeg 已安装但显示不可用怎么办？ =
-
-确认网站所用 PHP-FPM 允许 `exec`，并检查 `ffmpeg` 和 `ffprobe` 都可执行。CLI PHP 与网站 PHP-FPM 可能读取不同配置。
-
 = 上传失败会删除本地文件吗？ =
 
 不会。只有主文件和全部必需缩略图都上传成功，插件才提交云端状态并删除本地副本。
@@ -83,6 +78,10 @@ WPStow 会把媒体文件发送到管理员配置的存储服务。存储凭据�
 * 生产环境应限制插件日志目录的 Web 访问并定期轮换云存储凭据。
 
 == Changelog ==
+
+= 2.0.4 =
+* 按产品规划彻底移除视频压缩与视频水印功能、后台菜单和 FFmpeg 依赖。
+* 保存设置时自动清理旧版本遗留的视频处理选项；视频转存功能不受影响。
 
 = 2.0.3 =
 * 图片处理移除旧压缩功能，新增可调质量的 WebP 格式转换。
@@ -164,7 +163,6 @@ WPStow 会把媒体文件发送到管理员配置的存储服务。存储凭据�
 * 上传失败时保留本地文件，避免部分上传造成数据丢失。
 * 支持非图片附件和单文件处理的真实结果反馈。
 * 修复 S3 对象 Key 编码、Endpoint 路径和非默认端口签名。
-* 修复 FFmpeg 检测与 ffprobe 执行。
 * 加固 nonce、权限、TLS、日志和代理路径校验。
 * 增加状态概览、响应式后台界面和未保存修改提示。
 

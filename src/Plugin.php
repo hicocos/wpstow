@@ -67,12 +67,6 @@ abstract class Plugin
     public $filename_preset;      // 新上传文件命名预设
     public $filename_template;    // 自定义文件名模板
 
-    // 视频处理
-    public $video_compress;       // 视频压缩开关
-    public $video_compress_quality; // 视频压缩质量: low/medium/high
-    public $video_max_resolution; // 最大分辨率
-    public $video_watermark;      // 视频水印开关
-
     protected static $instance = null;
 
     public function __construct()
@@ -158,11 +152,6 @@ abstract class Plugin
         $this->filename_preset = $setting['filename_preset'] ?? FileNaming::DEFAULT_PRESET;
         $this->filename_template = $setting['filename_template'] ?? FileNaming::DEFAULT_TEMPLATE;
 
-        // 视频处理
-        $this->video_compress = $setting['video_compress'] ?? 'no';
-        $this->video_compress_quality = $setting['video_compress_quality'] ?? 'medium';
-        $this->video_max_resolution = $setting['video_max_resolution'] ?? '1080p';
-        $this->video_watermark = $setting['video_watermark'] ?? 'no';
     }
 
     public static function getPluginDir()

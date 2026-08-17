@@ -343,10 +343,6 @@ class DirectUpload
                 && MediaHandler::config('image_format_conversion') !== 'yes'
                 && MediaHandler::config('image_watermark') !== 'yes';
         }
-        if ($category === 'video') {
-            return MediaHandler::config('video_compress') !== 'yes'
-                && MediaHandler::config('video_watermark') !== 'yes';
-        }
         return true;
     }
 

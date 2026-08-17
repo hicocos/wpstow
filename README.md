@@ -13,7 +13,6 @@ WPStow 是一款 WordPress 云端媒体存储插件，可将图片、视频、�
 - 支持 S3/R2 浏览器直传，大文件自动使用 Multipart 分片上传
 - 支持 R2 私有桶预签名访问，无需开放 Bucket 公共访问权限
 - 支持统一转换 WebP（质量可调）、文字或图片水印、外链图片本地化和原图单文件模式
-- 支持通过 FFmpeg 压缩视频、限制分辨率和添加视频水印
 - 接管 WordPress 媒体 URL、缩略图、`srcset`、REST API 和编辑器媒体地址
 - 支持扫描并批量接管媒体库中的现有附件
 - 上传失败时保留本地文件，云端删除失败时通过后台队列继续重试
@@ -37,7 +36,6 @@ WPStow 是一款 WordPress 云端媒体存储插件，可将图片、视频、�
 - PHP cURL 与 JSON 扩展
 - 推荐启用 PHP Fileinfo 扩展
 - FTP/FTPS 需要 PHP FTP 扩展
-- 视频处理需要 `ffmpeg`、`ffprobe`，并允许 PHP 使用 `exec`
 
 ## 安装
 
@@ -112,10 +110,6 @@ WPStow 通过 GitHub Releases 获取稳定版本：
 ### 为什么 R2 私有媒体地址包含 `admin-ajax.php`？
 
 这是固定的链接解析入口。WPStow 验证附件与对象的对应关系后返回 `302`，浏览器随后直接从 R2 获取文件。
-
-### FFmpeg 已安装但后台显示不可用怎么办？
-
-请确认网站实际使用的 PHP-FPM 环境允许 `exec`，并且 `ffmpeg` 和 `ffprobe` 对该环境可执行。CLI PHP 与 PHP-FPM 可能使用不同的配置。
 
 ## 开发与发布
 
